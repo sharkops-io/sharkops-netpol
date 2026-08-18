@@ -1,0 +1,87 @@
+suite: ciliumnetworkpolicy
+templates:
+  - ciliumnetworkpolicy.yaml
+tests:
+  - it: renders nothing when allowCiliumIngress is absent
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders only for entries that opt in
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+        - name: beta
+          podSelector: {}
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  # The whole reason this template exists. Cilium ingress traffic arrives with
+  # the RESERVED `ingress` identity; a vanilla NetworkPolicy cannot name it,
+  # and a kube-system namespaceSelector does NOT match it (proven in
+  # talos docs/policy-lab: HTTP 000 with that rule, 200 with this one).
+  - it: allows the reserved ingress entity
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+          allowCiliumIngress: true
+    asserts:
+      - isKind:
+          of: CiliumNetworkPolicy
+      - isAPIVersion:
+          of: cilium.io/v2
+      - equal:
+          path: metadata.name
+          value: alpha-cilium-ingress
+      - equal:
+          path: spec.ingress[0].fromEntities
+          value: ["ingress"]
+      - equal:
+          path: spec.endpointSelector.matchLabels["app.kubernetes.io/name"]
+          value: alpha
+
+  - it: restricts to named ports when given
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+          ciliumIngressPorts:
+            - port: "3000"
+              protocol: TCP
+    asserts:
+      - equal:
+          path: spec.ingress[0].toPorts[0].ports[0].port
+          value: "3000"
+
+  - it: omits toPorts entirely when no ports are given
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+    asserts:
+      - notExists:
+          path: spec.ingress[0].toPorts
+
+  - it: never emits an egress block
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+    asserts:
+      - notExists:
+          path: spec.egress
