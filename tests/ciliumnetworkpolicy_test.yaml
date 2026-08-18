@@ -66,6 +66,34 @@ tests:
           path: spec.ingress[0].toPorts[0].ports[0].port
           value: "3000"
 
+  - it: coerces an integer port to a string
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+          ciliumIngressPorts:
+            - port: 3000
+              protocol: TCP
+    asserts:
+      - equal:
+          path: spec.ingress[0].toPorts[0].ports[0].port
+          value: "3000"
+
+  - it: leaves a string port as a string
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+          ciliumIngressPorts:
+            - port: "3000"
+              protocol: TCP
+    asserts:
+      - equal:
+          path: spec.ingress[0].toPorts[0].ports[0].port
+          value: "3000"
+
   - it: omits toPorts entirely when no ports are given
     set:
       policies:

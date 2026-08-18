@@ -39,7 +39,16 @@ spec:
       {{- with $p.ciliumIngressPorts }}
       toPorts:
         - ports:
-            {{- toYaml . | nindent 12 }}
+            {{- range . }}
+            # Cilium's CRD requires port to be a STRING. Quoting here means a
+            # values file may write either `port: 3000` or `port: "3000"` and
+            # both render correctly -- an unquoted int is otherwise rejected
+            # only at apply time, by which point it is in a merge request.
+            - port: {{ .port | quote }}
+              {{- with .protocol }}
+              protocol: {{ . }}
+              {{- end }}
+            {{- end }}
       {{- end }}
 {{- end }}
 {{- end }}
