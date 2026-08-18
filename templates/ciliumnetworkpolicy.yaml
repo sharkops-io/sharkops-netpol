@@ -18,9 +18,22 @@ LoadBalancer, from outside the cluster:
   that + this CNP                     -> HTTP 200 in 6ms
 
 Omitting this is what took every another-app integration down on 2026-08-16.
+
+The same CNP also carries the `kube-apiserver` reserved entity, for
+admission-webhook traffic. The apiserver is hostNetwork and cannot be named
+by a vanilla NetworkPolicy either -- the longhorn-webhook precedent works
+around that by allowing the whole port with no `from:` at all, which admits
+any source on it. `kube-apiserver` names the real caller precisely. Verified
+live: the caller appears in Hubble as `reserved:kube-apiserver`.
+
+Both entities render into ONE object, as separate entries in the same
+`ingress` list, rather than a second CiliumNetworkPolicy -- and the object
+keeps its existing `<name>-cilium-ingress` name even when it is carrying only
+the apiserver rule, so as not to orphan the CNPs already deployed in five
+live namespaces.
 */}}
 {{- range $p := .Values.policies }}
-{{- if $p.allowCiliumIngress }}
+{{- if or $p.allowCiliumIngress $p.allowKubeApiserver }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -34,6 +47,7 @@ spec:
   endpointSelector:
     {{- toYaml (default dict $p.podSelector) | nindent 4 }}
   ingress:
+    {{- if $p.allowCiliumIngress }}
     - fromEntities:
         - ingress
       {{- with $p.ciliumIngressPorts }}
@@ -50,5 +64,21 @@ spec:
               {{- end }}
             {{- end }}
       {{- end }}
+    {{- end }}
+    {{- if $p.allowKubeApiserver }}
+    - fromEntities:
+        - kube-apiserver
+      {{- with $p.kubeApiserverPorts }}
+      toPorts:
+        - ports:
+            {{- range . }}
+            # Same STRING requirement as ciliumIngressPorts above.
+            - port: {{ .port | quote }}
+              {{- with .protocol }}
+              protocol: {{ . }}
+              {{- end }}
+            {{- end }}
+      {{- end }}
+    {{- end }}
 {{- end }}
 {{- end }}
