@@ -113,3 +113,96 @@ tests:
     asserts:
       - notExists:
           path: spec.egress
+
+  - it: renders nothing when neither entity flag is set
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+          allowPrometheus: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # The apiserver is hostNetwork and cannot be named by a vanilla
+  # NetworkPolicy; the longhorn-webhook precedent allows the whole port
+  # instead. `kube-apiserver` is the reserved Cilium identity that names it
+  # precisely -- verified live: the caller appears in Hubble as
+  # `reserved:kube-apiserver`.
+  - it: allows the reserved kube-apiserver entity
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+          allowKubeApiserver: true
+    asserts:
+      - isKind:
+          of: CiliumNetworkPolicy
+      - isAPIVersion:
+          of: cilium.io/v2
+      - equal:
+          path: metadata.name
+          value: alpha-cilium-ingress
+      - equal:
+          path: spec.ingress[0].fromEntities
+          value: ["kube-apiserver"]
+
+  # Both entities must land in ONE CiliumNetworkPolicy object, not two --
+  # renaming or duplicating the object would orphan the CNPs already
+  # deployed in five live namespaces.
+  - it: renders one CNP with two ingress rules when both flags are set
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+          allowCiliumIngress: true
+          allowKubeApiserver: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.ingress[0].fromEntities
+          value: ["ingress"]
+      - equal:
+          path: spec.ingress[1].fromEntities
+          value: ["kube-apiserver"]
+
+  - it: coerces an integer kubeApiserverPorts port to a string
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowKubeApiserver: true
+          kubeApiserverPorts:
+            - port: 9443
+              protocol: TCP
+    asserts:
+      - equal:
+          path: spec.ingress[0].toPorts[0].ports[0].port
+          value: "9443"
+
+  - it: omits toPorts entirely when no kubeApiserverPorts are given
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowKubeApiserver: true
+    asserts:
+      - notExists:
+          path: spec.ingress[0].toPorts
+
+  - it: never emits an egress block for the kube-apiserver rule
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowKubeApiserver: true
+    asserts:
+      - notExists:
+          path: spec.egress

@@ -30,5 +30,20 @@ policies: []
   #     - port: "3000"
   #       protocol: TCP
   #
+  #   # For admission webhooks. The apiserver is hostNetwork, same problem as
+  #   # Cilium ingress above -- a vanilla NetworkPolicy cannot name it. The
+  #   # longhorn-webhook precedent instead allows the whole port with no
+  #   # `from:`, which admits any source on it; this names the real caller
+  #   # precisely via Cilium's reserved `kube-apiserver` entity. Renders into
+  #   # the SAME CiliumNetworkPolicy as allowCiliumIngress, as a second
+  #   # ingress rule, not a second object.
+  #   allowKubeApiserver: true
+  #
+  #   # Optional, same shape and same string-port requirement as
+  #   # ciliumIngressPorts. Omit to allow the apiserver on every port.
+  #   kubeApiserverPorts:
+  #     - port: "9443"
+  #       protocol: TCP
+  #
   #   # Raw NetworkPolicy ingress rules, appended verbatim.
   #   extraIngress: []
