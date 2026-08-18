@@ -1,0 +1,45 @@
+{{/*
+INGRESS ONLY. Phase 2 (egress) adds an `egress` key to these same entries and
+renders it into the sibling CiliumNetworkPolicy -- never into this file.
+Vanilla egress can only express CIDRs, and outbound traffic here is mostly to
+named hosts on rotating IPs, which needs Cilium toFQDNs.
+
+Note this template deliberately does NOT render a rule for Cilium ingress
+traffic. That traffic carries the reserved `ingress` identity, which a vanilla
+NetworkPolicy cannot name -- see ciliumnetworkpolicy.yaml.
+*/}}
+{{- range $p := .Values.policies }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $p.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  podSelector:
+    {{- toYaml (default dict $p.podSelector) | nindent 4 }}
+  policyTypes:
+    - Ingress
+  {{- $hasRules := or $p.allowPrometheus $p.extraIngress }}
+  # An explicit [] when there are no rules. Kubernetes treats a null ingress
+  # and an empty one identically, but `ingress: []` reads as "deny everything,
+  # deliberately" where a bare key reads as "someone forgot to fill this in".
+  ingress:{{ if not $hasRules }} []{{ end }}
+    {{- if $p.allowPrometheus }}
+    # Without this the namespace is simply never scraped: the target goes
+    # down, the metric vanishes, and nothing else reports a problem.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+    {{- end }}
+    {{- with $p.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
