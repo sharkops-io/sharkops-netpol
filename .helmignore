@@ -1,0 +1,31 @@
+# Git directory
+.git/
+
+# GitLab CI
+.gitlab-ci.yml
+
+# Test files
+tests/
+
+# Example files
+examples/
+
+# Documentation
+README.md
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
+
+# Package files
+*.tgz
