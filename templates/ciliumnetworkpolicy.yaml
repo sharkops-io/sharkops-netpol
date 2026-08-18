@@ -1,0 +1,54 @@
+{{/*
+THE INGRESS PATH, and it is required rather than optional for any workload
+reachable on a public hostname.
+
+A public hostname resolves to the cilium-ingress LoadBalancer, so the traffic
+re-enters the cluster through Cilium's Ingress proxy and arrives with the
+RESERVED `ingress` identity -- not `host`, and not a pod in kube-system. The
+"host->pod is auto-allowed" rule that kubelet probes rely on does NOT extend
+to it, and because it is a reserved identity Cilium resolves it before any
+CIDR match, so an ipBlock is not a reliable way to express it either.
+
+Measured in talos docs/policy-lab against a real Ingress through the live
+LoadBalancer, from outside the cluster:
+
+  no policy                           -> HTTP 200
+  netpol with namespaceSelector       -> HTTP 000, 8s timeout, BLOCKED
+    kube-system
+  that + this CNP                     -> HTTP 200 in 6ms
+
+Omitting this is what took every another-app integration down on 2026-08-16.
+*/}}
+{{- range $p := .Values.policies }}
+{{- if $p.allowCiliumIngress }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ $p.name }}-cilium-ingress
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  endpointSelector:
+    {{- toYaml (default dict $p.podSelector) | nindent 4 }}
+  ingress:
+    - fromEntities:
+        - ingress
+      {{- with $p.ciliumIngressPorts }}
+      toPorts:
+        - ports:
+            {{- range . }}
+            # Cilium's CRD requires port to be a STRING. Quoting here means a
+            # values file may write either `port: 3000` or `port: "3000"` and
+            # both render correctly -- an unquoted int is otherwise rejected
+            # only at apply time, by which point it is in a merge request.
+            - port: {{ .port | quote }}
+              {{- with .protocol }}
+              protocol: {{ . }}
+              {{- end }}
+            {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}

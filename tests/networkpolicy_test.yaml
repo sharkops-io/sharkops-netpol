@@ -1,0 +1,93 @@
+suite: networkpolicy
+templates:
+  - networkpolicy.yaml
+tests:
+  - it: renders nothing when policies is empty
+    set:
+      policies: []
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders one policy per entry
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+        - name: beta
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: beta
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: is ingress-only and default-deny with no rules
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - isAPIVersion:
+          of: networking.k8s.io/v1
+      - equal:
+          path: spec.policyTypes
+          value: ["Ingress"]
+      - equal:
+          path: spec.ingress
+          value: []
+
+  - it: allows prometheus when asked
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+          allowPrometheus: true
+    asserts:
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: monitoring
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: prometheus
+
+  - it: appends extraIngress verbatim
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          extraIngress:
+            - from:
+                - podSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: caller
+              ports:
+                - port: 9000
+                  protocol: TCP
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports[0].port
+          value: 9000
+
+  # Phase 2 guard. An egress block here silently breaks DNS for whatever this
+  # selects, which is why phase 1 is ingress-only.
+  - it: never emits an egress block
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowPrometheus: true
+    asserts:
+      - notExists:
+          path: spec.egress
+      - notContains:
+          path: spec.policyTypes
+          content: Egress
