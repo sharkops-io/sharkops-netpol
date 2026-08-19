@@ -2,9 +2,9 @@
 # every workload in that namespace -- the openbao namespace needs bao and its
 # snapshot CronJob, monitoring needs several.
 #
-# INGRESS ONLY. There is deliberately no egress key anywhere in this chart:
-# an egress block silently breaks DNS for whatever it selects. Egress is
-# Phase 2 and will be added as a key on these same entries.
+# Egress is opt-in per entry via the `egress` key below. Setting it enables
+# default-deny egress for the selected pods -- see the `egress` block in the
+# commented example for why `enabled` is required and DNS is automatic.
 policies: []
   # - name: wikijs
   #   # Standard Kubernetes label selector. `{}` selects EVERY pod in the
@@ -60,4 +60,17 @@ policies: []
   #   nodePorts:
   #     - port: "5170"
   #       protocol: TCP
+
+  #   # EGRESS. Rendered into the CiliumNetworkPolicy, never the vanilla
+  #   # NetworkPolicy -- vanilla egress can only express CIDRs, and this needs
+  #   # reserved entities and FQDNs.
+  #   #
+  #   # `enabled` is REQUIRED and deliberate. A CiliumNetworkPolicy carrying any
+  #   # egress content makes the selected endpoints DEFAULT-DENY for egress, so
+  #   # setting one sub-key must not be enough to switch a workload over.
+  #   #
+  #   # DNS to kube-dns is emitted AUTOMATICALLY whenever this is enabled. It is
+  #   # not a key you can forget.
+  #   egress:
+  #     enabled: true
 

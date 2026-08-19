@@ -33,7 +33,7 @@ the apiserver rule, so as not to orphan the CNPs already deployed in five
 live namespaces.
 */}}
 {{- range $p := .Values.policies }}
-{{- if or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes }}
+{{- if or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes (and $p.egress $p.egress.enabled) }}
 {{- $hasIngress := or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes }}
 ---
 apiVersion: cilium.io/v2
@@ -114,6 +114,25 @@ spec:
             {{- end }}
       {{- end }}
     {{- end }}
+  {{- end }}
+  {{- if and $p.egress $p.egress.enabled }}
+  egress:
+    # ALWAYS FIRST, ALWAYS PRESENT. A CiliumNetworkPolicy carrying any egress
+    # content makes the selected endpoints DEFAULT-DENY for egress (policy-lab
+    # T4). Without DNS, name resolution fails first and the failure reads
+    # exactly like a policy drop against the real destination -- sending the
+    # reader to debug the wrong rule. This is a trap already paid for in the
+    # lab; it is emitted automatically so it cannot be forgotten.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
   {{- end }}
 {{- end }}
 {{- end }}

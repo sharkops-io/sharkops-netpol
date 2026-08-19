@@ -254,3 +254,44 @@ tests:
       # deny-all-ingress. It must be absent entirely.
       - notExists:
           path: spec.ingress
+
+  - it: renders no egress section unless egress.enabled is true
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+          egress:
+            # enabled deliberately absent; the sub-keys below must NOT be
+            # enough on their own to switch this workload to default-deny egress
+            toEntities: [world]
+            toFQDNs:
+              - matchName: example.com
+    asserts:
+      - hasDocuments:
+          count: 1
+      - notExists:
+          path: spec.egress
+
+  - it: always emits the kube-dns allow when egress is enabled
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      # DNS is not a key the author can forget. Omitting it produces a
+      # name-resolution failure that reads exactly like a policy drop against
+      # the real destination.
+      - equal:
+          path: spec.egress[0].toEndpoints[0].matchLabels["k8s-app"]
+          value: kube-dns
+      - equal:
+          path: spec.egress[0].toPorts[0].ports[0].port
+          value: "53"
+      - equal:
+          path: spec.egress[0].toPorts[0].ports[1].port
+          value: "53"
