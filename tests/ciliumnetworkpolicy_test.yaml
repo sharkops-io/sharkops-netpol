@@ -342,3 +342,38 @@ tests:
             - 10.0.0.0/8
             - 172.16.0.0/12
             - 192.168.0.0/16
+
+  - it: renders toFQDNs entries verbatim
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            toFQDNs:
+              - matchName: index.docker.io
+              - matchPattern: "*.example.com"
+    asserts:
+      - equal:
+          path: spec.egress[1].toFQDNs[0].matchName
+          value: index.docker.io
+      - equal:
+          path: spec.egress[1].toFQDNs[1].matchPattern
+          value: "*.example.com"
+
+  - it: appends extraEgress verbatim
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            extraEgress:
+              - toServices:
+                  - k8sService:
+                      serviceName: example
+                      namespace: default
+    asserts:
+      - equal:
+          path: spec.egress[1].toServices[0].k8sService.serviceName
+          value: example

@@ -154,6 +154,17 @@ spec:
     - toEntities:
         - kube-apiserver
     {{- end }}
+    {{- with $p.egress.toFQDNs }}
+    # toFQDNs requires the Cilium DNS proxy to be in path for the selected
+    # endpoints, which happens only where an L7 DNS rule applies. The key exists
+    # so the interface is complete; nothing should USE it until DNS visibility
+    # is enabled for that namespace.
+    - toFQDNs:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with $p.egress.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
   {{- end }}
 {{- end }}
 {{- end }}

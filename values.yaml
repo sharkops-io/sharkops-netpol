@@ -76,6 +76,21 @@ policies: []
   #
   #     # Reserved Cilium entities, e.g. `world` (anything outside the
   #     # cluster) or `cluster` (anything inside it).
+  #     #
+  #     # WARNING -- POLICIES ARE ADDITIVE.
+  #     #
+  #     # A permissive entry here UNIONS with any restrictive NetworkPolicy
+  #     # already on the same pod and hands back what that policy was denying.
+  #     # This is not hypothetical: qbittorrent carries
+  #     # qbittorrent-restrict-egress, which denies all of RFC1918 so a
+  #     # compromised torrent client cannot pivot to the LAN. A
+  #     # `toEntities: [all]` rule on that pod silently undoes it -- which is
+  #     # why qbittorrent is excluded from the plex DNS visibility policy.
+  #     #
+  #     # Before widening egress on any workload, check for an existing egress
+  #     # NetworkPolicy on it. Also check for an ALLOW-ALL egress rule
+  #     # (policyTypes includes Egress with an empty rule, as netbox-valkey
+  #     # has) -- that unions with and neutralises anything you add.
   #     toEntities:
   #       - world
   #       - cluster
@@ -97,4 +112,17 @@ policies: []
   #     # Same reserved `kube-apiserver` entity as the ingress-side
   #     # allowKubeApiserver, but on the egress list.
   #     allowKubeApiserver: true
+  #
+  #     # FQDN-based egress, e.g. `matchName: index.docker.io` or
+  #     # `matchPattern: "*.example.com"`. Requires Cilium's DNS proxy to be
+  #     # in path for the selected endpoints, which happens only where an L7
+  #     # DNS rule applies. The key exists so the interface is complete;
+  #     # nothing should USE it until DNS visibility is enabled for that
+  #     # namespace.
+  #     toFQDNs:
+  #       - matchName: index.docker.io
+  #       - matchPattern: "*.example.com"
+  #
+  #     # Raw Cilium egress rules, appended verbatim.
+  #     extraEgress: []
 
