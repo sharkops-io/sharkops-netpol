@@ -47,3 +47,17 @@ policies: []
   #
   #   # Raw NetworkPolicy ingress rules, appended verbatim.
   #   extraIngress: []
+
+  #   # Traffic from a cluster NODE. Needed by any workload behind a NodePort:
+  #   # the node DNATs the external connection to a pod that may live on a
+  #   # DIFFERENT node, and Cilium's allow-localhost covers only the same-node
+  #   # case. Uses the reserved `host` and `remote-node` entities, not an
+  #   # ipBlock -- Cilium resolves reserved identities before any CIDR match.
+  #   allowNodes: true
+  #
+  #   # Optional, same shape and string-port requirement as the other entity
+  #   # port lists. Omit to allow node traffic on every port.
+  #   nodePorts:
+  #     - port: "5170"
+  #       protocol: TCP
+

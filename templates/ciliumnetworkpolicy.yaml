@@ -33,7 +33,7 @@ the apiserver rule, so as not to orphan the CNPs already deployed in five
 live namespaces.
 */}}
 {{- range $p := .Values.policies }}
-{{- if or $p.allowCiliumIngress $p.allowKubeApiserver }}
+{{- if or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -58,6 +58,38 @@ spec:
             # values file may write either `port: 3000` or `port: "3000"` and
             # both render correctly -- an unquoted int is otherwise rejected
             # only at apply time, by which point it is in a merge request.
+            - port: {{ .port | quote }}
+              {{- with .protocol }}
+              protocol: {{ . }}
+              {{- end }}
+            {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if $p.allowNodes }}
+    # Traffic arriving FROM A CLUSTER NODE, e.g. a NodePort service where the
+    # node DNATs an external connection to a pod that may be on a DIFFERENT
+    # node. Cilium's allow-localhost covers host->pod on the SAME node only;
+    # the remote-node case is not auto-allowed and is silently dropped.
+    #
+    # Expressed as reserved entities rather than an ipBlock of the node subnet
+    # ON PURPOSE. Cilium resolves reserved identities BEFORE any CIDR match, so
+    # a 192.168.20.0/24 ipBlock does not reliably admit node traffic -- the same
+    # reason allowCiliumIngress exists rather than an ipBlock for the LB.
+    #
+    # Found 2026-08-19: Talos ships node logs to vector:5170 via a NodePort, and
+    # ~4 drops/sec had been discarded continuously since the logging namespace
+    # was default-denied. Nothing reported it -- no unhealthy pod, no down
+    # target, no alert. Pod-log ingestion via alloy kept working, so the log
+    # stack looked entirely healthy.
+    - fromEntities:
+        - host
+        - remote-node
+      {{- with $p.nodePorts }}
+      toPorts:
+        - ports:
+            {{- range . }}
+            # Cilium's CRD requires port to be a STRING, same as the other
+            # entity blocks in this file.
             - port: {{ .port | quote }}
               {{- with .protocol }}
               protocol: {{ . }}
