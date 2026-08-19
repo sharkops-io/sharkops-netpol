@@ -237,3 +237,143 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  - it: does not emit a bare ingress key when only egress is requested
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+          egress:
+            enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      # A bare `ingress:` on an egress-only policy is ambiguous and may read as
+      # deny-all-ingress. It must be absent entirely.
+      - notExists:
+          path: spec.ingress
+
+  - it: renders no egress section unless egress.enabled is true
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+          egress:
+            # enabled deliberately absent; the sub-keys below must NOT be
+            # enough on their own to switch this workload to default-deny egress
+            toEntities: [world]
+            toFQDNs:
+              - matchName: example.com
+    asserts:
+      - hasDocuments:
+          count: 1
+      - notExists:
+          path: spec.egress
+
+  - it: always emits the kube-dns allow when egress is enabled
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      # DNS is not a key the author can forget. Omitting it produces a
+      # name-resolution failure that reads exactly like a policy drop against
+      # the real destination.
+      - equal:
+          path: spec.egress[0].toEndpoints[0].matchLabels["k8s-app"]
+          value: kube-dns
+      - equal:
+          path: spec.egress[0].toPorts[0].ports[0].port
+          value: "53"
+      - equal:
+          path: spec.egress[0].toPorts[0].ports[1].port
+          value: "53"
+
+  - it: renders toEntities and the apiserver entity
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            toEntities: [world, cluster]
+            allowKubeApiserver: true
+    asserts:
+      - equal:
+          path: spec.egress[1].toEntities
+          value:
+            - world
+            - cluster
+      - equal:
+          path: spec.egress[2].toEntities
+          value:
+            - kube-apiserver
+
+  - it: renders toCIDR with its exclusions intact
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            toCIDR:
+              - cidr: 0.0.0.0/0
+                except:
+                  - 10.0.0.0/8
+                  - 172.16.0.0/12
+                  - 192.168.0.0/16
+    asserts:
+      # The exclusions ARE the policy. This is the qbittorrent shape: allow the
+      # internet, deny the cluster and the LAN. Losing them inverts the meaning
+      # from "restrict" to "allow everything".
+      - equal:
+          path: spec.egress[1].toCIDRSet[0].cidr
+          value: 0.0.0.0/0
+      - equal:
+          path: spec.egress[1].toCIDRSet[0].except
+          value:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+            - 192.168.0.0/16
+
+  - it: renders toFQDNs entries verbatim
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            toFQDNs:
+              - matchName: index.docker.io
+              - matchPattern: "*.example.com"
+    asserts:
+      - equal:
+          path: spec.egress[1].toFQDNs[0].matchName
+          value: index.docker.io
+      - equal:
+          path: spec.egress[1].toFQDNs[1].matchPattern
+          value: "*.example.com"
+
+  - it: appends extraEgress verbatim
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            extraEgress:
+              - toServices:
+                  - k8sService:
+                      serviceName: example
+                      namespace: default
+    asserts:
+      - equal:
+          path: spec.egress[1].toServices[0].k8sService.serviceName
+          value: example

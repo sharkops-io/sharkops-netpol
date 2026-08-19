@@ -2,9 +2,9 @@
 # every workload in that namespace -- the openbao namespace needs bao and its
 # snapshot CronJob, monitoring needs several.
 #
-# INGRESS ONLY. There is deliberately no egress key anywhere in this chart:
-# an egress block silently breaks DNS for whatever it selects. Egress is
-# Phase 2 and will be added as a key on these same entries.
+# Egress is opt-in per entry via the `egress` key below. Setting it enables
+# default-deny egress for the selected pods -- see the `egress` block in the
+# commented example for why `enabled` is required and DNS is automatic.
 policies: []
   # - name: wikijs
   #   # Standard Kubernetes label selector. `{}` selects EVERY pod in the
@@ -60,4 +60,69 @@ policies: []
   #   nodePorts:
   #     - port: "5170"
   #       protocol: TCP
+
+  #   # EGRESS. Rendered into the CiliumNetworkPolicy, never the vanilla
+  #   # NetworkPolicy -- vanilla egress can only express CIDRs, and this needs
+  #   # reserved entities and FQDNs.
+  #   #
+  #   # `enabled` is REQUIRED and deliberate. A CiliumNetworkPolicy carrying any
+  #   # egress content makes the selected endpoints DEFAULT-DENY for egress, so
+  #   # setting one sub-key must not be enough to switch a workload over.
+  #   #
+  #   # DNS to kube-dns is emitted AUTOMATICALLY whenever this is enabled. It is
+  #   # not a key you can forget.
+  #   egress:
+  #     enabled: true
+  #
+  #     # Reserved Cilium entities, e.g. `world` (anything outside the
+  #     # cluster) or `cluster` (anything inside it).
+  #     #
+  #     # WARNING -- POLICIES ARE ADDITIVE.
+  #     #
+  #     # A permissive entry here UNIONS with any restrictive NetworkPolicy
+  #     # already on the same pod and hands back what that policy was denying.
+  #     # This is not hypothetical: qbittorrent carries
+  #     # qbittorrent-restrict-egress, which denies all of RFC1918 so a
+  #     # compromised torrent client cannot pivot to the LAN. A
+  #     # `toEntities: [all]` rule on that pod silently undoes it -- which is
+  #     # why qbittorrent is excluded from the plex DNS visibility policy.
+  #     #
+  #     # Before widening egress on any workload, check for an existing egress
+  #     # NetworkPolicy on it. Also check for an ALLOW-ALL egress rule
+  #     # (policyTypes includes Egress with an empty rule, as netbox-valkey
+  #     # has) -- that unions with and neutralises anything you add.
+  #     toEntities:
+  #       - world
+  #       - cluster
+  #
+  #     # CIDR-based egress. Renders as Cilium's `toCIDRSet` field, NOT
+  #     # `toCIDR` -- toCIDRSet is what carries `except`. The values key stays
+  #     # `toCIDR` here for readability; the template maps it. `except` is
+  #     # what makes this a restriction rather than a blanket allow: this is
+  #     # the qbittorrent shape -- allow the internet, deny the cluster and
+  #     # the LAN.
+  #     toCIDR:
+  #       - cidr: 0.0.0.0/0
+  #         except:
+  #           - 10.0.0.0/8
+  #           - 172.16.0.0/12
+  #           - 192.168.0.0/16
+  #
+  #     # For anything driving `kubectl exec`, e.g. the wal-switch CronJobs.
+  #     # Same reserved `kube-apiserver` entity as the ingress-side
+  #     # allowKubeApiserver, but on the egress list.
+  #     allowKubeApiserver: true
+  #
+  #     # FQDN-based egress, e.g. `matchName: index.docker.io` or
+  #     # `matchPattern: "*.example.com"`. Requires Cilium's DNS proxy to be
+  #     # in path for the selected endpoints, which happens only where an L7
+  #     # DNS rule applies. The key exists so the interface is complete;
+  #     # nothing should USE it until DNS visibility is enabled for that
+  #     # namespace.
+  #     toFQDNs:
+  #       - matchName: index.docker.io
+  #       - matchPattern: "*.example.com"
+  #
+  #     # Raw Cilium egress rules, appended verbatim.
+  #     extraEgress: []
 

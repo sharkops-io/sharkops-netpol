@@ -33,7 +33,8 @@ the apiserver rule, so as not to orphan the CNPs already deployed in five
 live namespaces.
 */}}
 {{- range $p := .Values.policies }}
-{{- if or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes }}
+{{- if or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes (and $p.egress $p.egress.enabled) }}
+{{- $hasIngress := or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -46,6 +47,7 @@ metadata:
 spec:
   endpointSelector:
     {{- toYaml (default dict $p.podSelector) | nindent 4 }}
+  {{- if $hasIngress }}
   ingress:
     {{- if $p.allowCiliumIngress }}
     - fromEntities:
@@ -112,5 +114,57 @@ spec:
             {{- end }}
       {{- end }}
     {{- end }}
+  {{- end }}
+  {{- if and $p.egress $p.egress.enabled }}
+  egress:
+    # ALWAYS FIRST, ALWAYS PRESENT. A CiliumNetworkPolicy carrying any egress
+    # content makes the selected endpoints DEFAULT-DENY for egress (policy-lab
+    # T4). Without DNS, name resolution fails first and the failure reads
+    # exactly like a policy drop against the real destination -- sending the
+    # reader to debug the wrong rule. This is a trap already paid for in the
+    # lab; it is emitted automatically so it cannot be forgotten.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    {{- with $p.egress.toEntities }}
+    - toEntities:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with $p.egress.toCIDR }}
+    - toCIDRSet:
+        {{- range . }}
+        - cidr: {{ .cidr }}
+          {{- with .except }}
+          except:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+    {{- end }}
+    {{- if $p.egress.allowKubeApiserver }}
+    # The apiserver is hostNetwork and cannot be named by a vanilla
+    # NetworkPolicy. Anything driving `kubectl exec` -- the wal-switch CronJobs
+    # -- needs this.
+    - toEntities:
+        - kube-apiserver
+    {{- end }}
+    {{- with $p.egress.toFQDNs }}
+    # toFQDNs requires the Cilium DNS proxy to be in path for the selected
+    # endpoints, which happens only where an L7 DNS rule applies. The key exists
+    # so the interface is complete; nothing should USE it until DNS visibility
+    # is enabled for that namespace.
+    - toFQDNs:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with $p.egress.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 {{- end }}
 {{- end }}
