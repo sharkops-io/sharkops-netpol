@@ -2,7 +2,7 @@ apiVersion: v2
 name: sharkops-netpol
 description: Default-deny ingress NetworkPolicy and Cilium ingress CiliumNetworkPolicy for a namespace
 type: application
-version: 0.1.0
+version: 0.3.0
 appVersion: "1"
 home: https://gitlab.com/sharkops/helm-charts/sharkops-netpol
 sources:

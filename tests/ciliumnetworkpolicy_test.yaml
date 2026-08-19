@@ -206,3 +206,34 @@ tests:
     asserts:
       - notExists:
           path: spec.egress
+
+  - it: renders the host and remote-node entities when allowNodes is set
+    set:
+      policies:
+        - name: vector
+          allowNodes: true
+          nodePorts:
+            - port: 5170
+              protocol: TCP
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.ingress[0].fromEntities
+          value:
+            - host
+            - remote-node
+      # A NodePort DNATs to a pod that may be on ANOTHER node, so `host` alone
+      # is not enough -- remote-node is the case that actually drops.
+      - equal:
+          path: spec.ingress[0].toPorts[0].ports[0].port
+          value: "5170"
+
+  - it: renders no CiliumNetworkPolicy when allowNodes is absent
+    set:
+      policies:
+        - name: vector
+          allowPrometheus: true
+    asserts:
+      - hasDocuments:
+          count: 0
