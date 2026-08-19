@@ -34,6 +34,7 @@ live namespaces.
 */}}
 {{- range $p := .Values.policies }}
 {{- if or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes }}
+{{- $hasIngress := or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -46,6 +47,7 @@ metadata:
 spec:
   endpointSelector:
     {{- toYaml (default dict $p.podSelector) | nindent 4 }}
+  {{- if $hasIngress }}
   ingress:
     {{- if $p.allowCiliumIngress }}
     - fromEntities:
@@ -112,5 +114,6 @@ spec:
             {{- end }}
       {{- end }}
     {{- end }}
+  {{- end }}
 {{- end }}
 {{- end }}

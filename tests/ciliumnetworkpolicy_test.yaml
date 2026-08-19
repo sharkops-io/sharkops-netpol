@@ -237,3 +237,20 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  - it: does not emit a bare ingress key when only egress is requested
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alpha
+          egress:
+            enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      # A bare `ingress:` on an egress-only policy is ambiguous and may read as
+      # deny-all-ingress. It must be absent entirely.
+      - notExists:
+          path: spec.ingress
