@@ -73,4 +73,28 @@ policies: []
   #   # not a key you can forget.
   #   egress:
   #     enabled: true
+  #
+  #     # Reserved Cilium entities, e.g. `world` (anything outside the
+  #     # cluster) or `cluster` (anything inside it).
+  #     toEntities:
+  #       - world
+  #       - cluster
+  #
+  #     # CIDR-based egress. Renders as Cilium's `toCIDRSet` field, NOT
+  #     # `toCIDR` -- toCIDRSet is what carries `except`. The values key stays
+  #     # `toCIDR` here for readability; the template maps it. `except` is
+  #     # what makes this a restriction rather than a blanket allow: this is
+  #     # the qbittorrent shape -- allow the internet, deny the cluster and
+  #     # the LAN.
+  #     toCIDR:
+  #       - cidr: 0.0.0.0/0
+  #         except:
+  #           - 10.0.0.0/8
+  #           - 172.16.0.0/12
+  #           - 192.168.0.0/16
+  #
+  #     # For anything driving `kubectl exec`, e.g. the wal-switch CronJobs.
+  #     # Same reserved `kube-apiserver` entity as the ingress-side
+  #     # allowKubeApiserver, but on the egress list.
+  #     allowKubeApiserver: true
 

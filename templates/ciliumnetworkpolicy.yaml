@@ -133,6 +133,27 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+    {{- with $p.egress.toEntities }}
+    - toEntities:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with $p.egress.toCIDR }}
+    - toCIDRSet:
+        {{- range . }}
+        - cidr: {{ .cidr }}
+          {{- with .except }}
+          except:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+    {{- end }}
+    {{- if $p.egress.allowKubeApiserver }}
+    # The apiserver is hostNetwork and cannot be named by a vanilla
+    # NetworkPolicy. Anything driving `kubectl exec` -- the wal-switch CronJobs
+    # -- needs this.
+    - toEntities:
+        - kube-apiserver
+    {{- end }}
   {{- end }}
 {{- end }}
 {{- end }}
