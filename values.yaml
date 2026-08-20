@@ -74,6 +74,22 @@ policies: []
   #   egress:
   #     enabled: true
   #
+  #     # Upgrades that automatic DNS rule from L3/L4 to L7, putting Cilium's
+  #     # DNS proxy in path. This is the PREREQUISITE for `toFQDNs` below and
+  #     # the only source of `hubble_dns_queries_total` -- without it a
+  #     # namespace resolves names normally and observes nothing, which is
+  #     # indistinguishable from a namespace that simply makes no queries.
+  #     #
+  #     # WARNING -- THIS DOES NOT MAKE A NAMESPACE SAFE TO INSTRUMENT.
+  #     # It lives under `egress`, so enabling it means the policy carries
+  #     # egress content, which makes the selected endpoints DEFAULT-DENY for
+  #     # egress. To observe WITHOUT restricting, pair it with
+  #     # `toEntities: [all]` -- and then read the additive-union warning
+  #     # below, because that pairing hands back whatever an existing
+  #     # restrictive egress NetworkPolicy was denying. That is exactly why
+  #     # qbittorrent is excluded from the plex DNS visibility policy.
+  #     dnsVisibility: true
+  #
   #     # Reserved Cilium entities, e.g. `world` (anything outside the
   #     # cluster) or `cluster` (anything inside it).
   #     #

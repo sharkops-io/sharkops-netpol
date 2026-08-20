@@ -128,11 +128,32 @@ spec:
             io.kubernetes.pod.namespace: kube-system
             k8s-app: kube-dns
       toPorts:
+        {{- if $p.egress.dnsVisibility }}
+        # DNS VISIBILITY. The L7 `rules.dns` block is what puts Cilium's DNS
+        # proxy in path for these endpoints. Without it the rule is L3/L4 only:
+        # resolution still works, but nothing observes it -- no
+        # hubble_dns_queries_total, and `toFQDNs` below silently matches
+        # NOTHING, failing as a drop against the real destination.
+        #
+        # `protocol: ANY` rather than the UDP+TCP pair used below. This is the
+        # exact shape running in 20 namespaces since 2026-08-20, kept verbatim
+        # rather than reasoned about: an L7 rule attached to a two-entry port
+        # list is not a combination this cluster has ever proven, and a
+        # CiliumNetworkPolicy the agent rejects looks identical to one it
+        # accepted until you query for flows that never arrive.
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"
+        {{- else }}
         - ports:
             - port: "53"
               protocol: UDP
             - port: "53"
               protocol: TCP
+        {{- end }}
     {{- with $p.egress.toEntities }}
     - toEntities:
         {{- toYaml . | nindent 8 }}
@@ -156,9 +177,10 @@ spec:
     {{- end }}
     {{- with $p.egress.toFQDNs }}
     # toFQDNs requires the Cilium DNS proxy to be in path for the selected
-    # endpoints, which happens only where an L7 DNS rule applies. The key exists
-    # so the interface is complete; nothing should USE it until DNS visibility
-    # is enabled for that namespace.
+    # endpoints, which happens only where an L7 DNS rule applies -- i.e. only
+    # when `dnsVisibility: true` is set above. Setting toFQDNs without it does
+    # not error; it matches nothing, and the traffic is denied as though the
+    # allowlist were wrong.
     - toFQDNs:
         {{- toYaml . | nindent 8 }}
     {{- end }}
