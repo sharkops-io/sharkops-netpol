@@ -377,3 +377,94 @@ tests:
       - equal:
           path: spec.egress[1].toServices[0].k8sService.serviceName
           value: example
+
+  # DNS VISIBILITY. The L7 rule is the prerequisite for toFQDNs and the only
+  # source of hubble_dns_queries_total. It was hand-applied to 19 namespaces on
+  # 2026-08-20 precisely because the chart could not express it.
+  - it: upgrades the DNS rule to L7 when dnsVisibility is set
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            dnsVisibility: true
+    asserts:
+      - equal:
+          path: spec.egress[0].toPorts[0].rules.dns[0].matchPattern
+          value: "*"
+      # protocol ANY, not the UDP+TCP pair -- this is the shape proven live.
+      - equal:
+          path: spec.egress[0].toPorts[0].ports[0].protocol
+          value: ANY
+      - lengthEqual:
+          path: spec.egress[0].toPorts[0].ports
+          count: 1
+
+  # Regression guard. Every existing consumer renders an L4-only DNS rule and
+  # must keep doing so byte for byte -- this asserts the SECOND port entry,
+  # which the L7 branch does not emit, so it cannot pass if the default flips.
+  - it: leaves the DNS rule at L4 when dnsVisibility is absent
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+    asserts:
+      - notExists:
+          path: spec.egress[0].toPorts[0].rules
+      - lengthEqual:
+          path: spec.egress[0].toPorts[0].ports
+          count: 2
+      - equal:
+          path: spec.egress[0].toPorts[0].ports[0].protocol
+          value: UDP
+      - equal:
+          path: spec.egress[0].toPorts[0].ports[1].protocol
+          value: TCP
+
+  # dnsVisibility is a sub-key of egress, so the `enabled` gate must still hold.
+  # Setting it alone must NOT switch a workload to default-deny egress.
+  - it: renders no egress at all when dnsVisibility is set without enabled
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+          egress:
+            dnsVisibility: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - notExists:
+          path: spec.egress
+
+  # The exact object hand-applied to 19 namespaces, which this release exists to
+  # replace. Observe without restricting: L7 DNS plus an allow-all.
+  - it: reproduces the deployed dns-visibility shape
+    set:
+      policies:
+        - name: dns-visibility
+          podSelector: {}
+          egress:
+            enabled: true
+            dnsVisibility: true
+            toEntities: [all]
+    asserts:
+      - equal:
+          path: spec.endpointSelector
+          value: {}
+      - equal:
+          path: spec.egress[0].toEndpoints[0].matchLabels["k8s-app"]
+          value: kube-dns
+      - equal:
+          path: spec.egress[0].toPorts[0].rules.dns[0].matchPattern
+          value: "*"
+      - equal:
+          path: spec.egress[1].toEntities
+          value:
+            - all
+      - lengthEqual:
+          path: spec.egress
+          count: 2
