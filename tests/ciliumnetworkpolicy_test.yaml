@@ -307,12 +307,12 @@ tests:
             allowKubeApiserver: true
     asserts:
       - equal:
-          path: spec.egress[2].toEntities
+          path: spec.egress[3].toEntities
           value:
             - world
             - cluster
       - equal:
-          path: spec.egress[3].toEntities
+          path: spec.egress[4].toEntities
           value:
             - kube-apiserver
 
@@ -334,10 +334,10 @@ tests:
       # internet, deny the cluster and the LAN. Losing them inverts the meaning
       # from "restrict" to "allow everything".
       - equal:
-          path: spec.egress[2].toCIDRSet[0].cidr
+          path: spec.egress[3].toCIDRSet[0].cidr
           value: 0.0.0.0/0
       - equal:
-          path: spec.egress[2].toCIDRSet[0].except
+          path: spec.egress[3].toCIDRSet[0].except
           value:
             - 10.0.0.0/8
             - 172.16.0.0/12
@@ -355,10 +355,10 @@ tests:
               - matchPattern: "*.example.com"
     asserts:
       - equal:
-          path: spec.egress[2].toFQDNs[0].matchName
+          path: spec.egress[3].toFQDNs[0].matchName
           value: index.docker.io
       - equal:
-          path: spec.egress[2].toFQDNs[1].matchPattern
+          path: spec.egress[3].toFQDNs[1].matchPattern
           value: "*.example.com"
 
   - it: appends extraEgress verbatim
@@ -375,7 +375,7 @@ tests:
                       namespace: default
     asserts:
       - equal:
-          path: spec.egress[2].toServices[0].k8sService.serviceName
+          path: spec.egress[3].toServices[0].k8sService.serviceName
           value: example
 
   # DNS VISIBILITY. The L7 rule is the prerequisite for toFQDNs and the only
@@ -469,7 +469,7 @@ tests:
           path: spec.egress[0].toPorts[0].rules.dns[0].matchPattern
           value: "*"
       - equal:
-          path: spec.egress[2].toEntities
+          path: spec.egress[3].toEntities
           value:
             - all
       - equal:
@@ -477,9 +477,12 @@ tests:
           value: 135
       - lengthEqual:
           path: spec.egress
-          # 3 since 0.8.0, not 2 -- the automatic ICMP rule sits between the DNS
-          # rule and the allow-all. See the note above this test.
-          count: 3
+          # 4 since 0.9.0 (was 3 in 0.8.0, 2 before it). There are now TWO
+          # automatic ICMP rules between the DNS rule and the allow-all: the
+          # `cluster` one, and the ff02::/16 link-local one that 0.9.0 added
+          # because link-local multicast is `world-ipv6` and `cluster` could
+          # never match it. See the note above this test.
+          count: 4
 
   # --- toEndpoints: in-cluster destinations -------------------------------
   #
@@ -505,20 +508,20 @@ tests:
                     protocol: TCP
     asserts:
       - equal:
-          path: spec.egress[2].toEndpoints[0].matchLabels["app.kubernetes.io/name"]
+          path: spec.egress[3].toEndpoints[0].matchLabels["app.kubernetes.io/name"]
           value: sonarr
       - equal:
-          path: spec.egress[2].toEndpoints[0].matchLabels["io.kubernetes.pod.namespace"]
+          path: spec.egress[3].toEndpoints[0].matchLabels["io.kubernetes.pod.namespace"]
           value: plex
       # Cilium's CRD requires a STRING here. helm-unittest CANNOT catch a CRD
       # type error -- an int renders valid YAML and every test passes, and only
       # the API server rejects it. This assertion is the unit-level guard; a
       # server-side dry-run is still required.
       - equal:
-          path: spec.egress[2].toPorts[0].ports[0].port
+          path: spec.egress[3].toPorts[0].ports[0].port
           value: "8989"
       - equal:
-          path: spec.egress[2].toPorts[0].ports[0].protocol
+          path: spec.egress[3].toPorts[0].ports[0].protocol
           value: TCP
 
   # Each entry must become its OWN egress rule. Collapsing them into one rule
@@ -541,19 +544,19 @@ tests:
                   - port: 8080
     asserts:
       - equal:
-          path: spec.egress[2].toEndpoints[0].matchLabels.app
+          path: spec.egress[3].toEndpoints[0].matchLabels.app
           value: sonarr
       - equal:
-          path: spec.egress[2].toPorts[0].ports[0].port
+          path: spec.egress[3].toPorts[0].ports[0].port
           value: "8989"
       - equal:
-          path: spec.egress[3].toEndpoints[0].matchLabels.app
+          path: spec.egress[4].toEndpoints[0].matchLabels.app
           value: qbittorrent
       - equal:
-          path: spec.egress[3].toPorts[0].ports[0].port
+          path: spec.egress[4].toPorts[0].ports[0].port
           value: "8080"
       - lengthEqual:
-          path: spec.egress[2].toPorts[0].ports
+          path: spec.egress[3].toPorts[0].ports
           count: 1
 
   - it: renders toEndpoints without ports when none are given
@@ -567,10 +570,10 @@ tests:
               - matchLabels: {app: anything}
     asserts:
       - equal:
-          path: spec.egress[2].toEndpoints[0].matchLabels.app
+          path: spec.egress[3].toEndpoints[0].matchLabels.app
           value: anything
       - notExists:
-          path: spec.egress[2].toPorts
+          path: spec.egress[3].toPorts
 
   # --- toCIDR ports and cidrGroupRef -------------------------------------
   #
@@ -591,10 +594,10 @@ tests:
                     protocol: TCP
     asserts:
       - equal:
-          path: spec.egress[2].toCIDRSet[0].cidr
+          path: spec.egress[3].toCIDRSet[0].cidr
           value: 192.168.1.1/32
       - equal:
-          path: spec.egress[2].toPorts[0].ports[0].port
+          path: spec.egress[3].toPorts[0].ports[0].port
           value: "443"
 
   # Same separation rule as toEndpoints, and for the same reason: one shared
@@ -615,16 +618,16 @@ tests:
                   - port: 443
     asserts:
       - equal:
-          path: spec.egress[2].toCIDRSet[0].cidr
+          path: spec.egress[3].toCIDRSet[0].cidr
           value: 192.168.10.2/32
       - equal:
-          path: spec.egress[2].toPorts[0].ports[0].port
+          path: spec.egress[3].toPorts[0].ports[0].port
           value: "32400"
       - equal:
-          path: spec.egress[3].toCIDRSet[0].cidr
+          path: spec.egress[4].toCIDRSet[0].cidr
           value: 192.168.1.1/32
       - equal:
-          path: spec.egress[3].toPorts[0].ports[0].port
+          path: spec.egress[4].toPorts[0].ports[0].port
           value: "443"
 
   - it: renders cidrGroupRef instead of a literal cidr
@@ -640,10 +643,10 @@ tests:
                   - port: 443
     asserts:
       - equal:
-          path: spec.egress[2].toCIDRSet[0].cidrGroupRef
+          path: spec.egress[3].toCIDRSet[0].cidrGroupRef
           value: lan-devices
       - notExists:
-          path: spec.egress[2].toCIDRSet[0].cidr
+          path: spec.egress[3].toCIDRSet[0].cidr
 
   # THE LOAD-BEARING ONE. Deleting an `except` block leaves the `.cidr`
   # assertion passing while the containment policy silently inverts to
@@ -663,20 +666,20 @@ tests:
                   - port: 443
     asserts:
       - equal:
-          path: spec.egress[2].toCIDRSet[0].except[0]
+          path: spec.egress[3].toCIDRSet[0].except[0]
           value: 10.0.0.0/8
       - equal:
-          path: spec.egress[2].toCIDRSet[0].except[1]
+          path: spec.egress[3].toCIDRSet[0].except[1]
           value: 192.168.0.0/16
       - lengthEqual:
-          path: spec.egress[2].toCIDRSet[0].except
+          path: spec.egress[3].toCIDRSet[0].except
           count: 2
       # Without this the test is VACUOUS: `except` already rendered before this
       # feature existed and `toPorts` was silently ignored, so the assertions
       # above passed identically with and without the implementation. This line
       # is what makes it fail today.
       - equal:
-          path: spec.egress[2].toPorts[0].ports[0].port
+          path: spec.egress[3].toPorts[0].ports[0].port
           value: "443"
 
   # Backwards compatibility: every existing consumer writes toCIDR with no
@@ -694,15 +697,15 @@ tests:
               - cidr: 172.16.0.0/12
     asserts:
       - equal:
-          path: spec.egress[2].toCIDRSet[0].cidr
+          path: spec.egress[3].toCIDRSet[0].cidr
           value: 10.0.0.0/8
       - equal:
-          path: spec.egress[2].toCIDRSet[1].cidr
+          path: spec.egress[3].toCIDRSet[1].cidr
           value: 172.16.0.0/12
       - notExists:
-          path: spec.egress[2].toPorts
+          path: spec.egress[3].toPorts
       - notExists:
-          path: spec.egress[3]
+          path: spec.egress[4]
 
   # --- ICMP egress ---------------------------------------------------------
   #
@@ -763,6 +766,94 @@ tests:
             type: 3
             family: IPv4
 
+  # *** ADDED 0.9.0 -- ALL THREE FOUND FIRING IN PRODUCTION. ***
+  # `AttributablePolicyDrops` came BACK after the Stage 1/2 egress rollout, on
+  # pgadmin (from 16:12Z), wikijs (18:12Z) and plex. Caught with
+  # `hubble observe --follow --verdict DROPPED --protocol icmpv6`, which named
+  # the exact types 0.8.0 does not emit.
+  #
+  # IPv6 Destination Unreachable is type **1**. 0.8.0 allows IPv4 type 3, its
+  # direct counterpart, but NOT this -- a family asymmetry, and the same class
+  # of silent failure as the PMTUD pair above. Seen pod-to-pod from wikijs.
+  - it: allows ICMPv6 Destination Unreachable, the counterpart of IPv4 type 3
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+    asserts:
+      - contains:
+          path: spec.egress[1].icmps[0].fields
+          content:
+            type: 1
+            family: IPv6
+
+  # Router Solicitation (133) and MLDv2 Listener Report (143) are routine IPv6
+  # housekeeping that EVERY dual-stack pod emits at startup.
+  #
+  # THEY NEED THEIR OWN RULE. Both go to link-local multicast -- 133 to ff02::2
+  # and 143 to ff02::16 -- which Cilium classifies as `reserved:world-ipv6`, NOT
+  # as `cluster`. Adding them to the rule above would render valid YAML, read as
+  # correct, and still deny every one of them.
+  - it: allows IPv6 link-local multicast housekeeping on its own rule
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+    asserts:
+      - equal:
+          path: spec.egress[2].toCIDRSet[0].cidr
+          value: "ff02::/16"
+      # scoped to link-local multicast ONLY -- never `cluster`, never `world`
+      - notExists:
+          path: spec.egress[2].toEntities
+      - contains:
+          path: spec.egress[2].icmps[0].fields
+          content:
+            type: 133
+            family: IPv6
+      - contains:
+          path: spec.egress[2].icmps[0].fields
+          content:
+            type: 143
+            family: IPv6
+
+  # The two ICMP rules must stay SEPARATE. Folding ff02::/16 into the cluster
+  # rule would let every listed type reach both destination sets -- the same
+  # over-grant shape the 0.7.0 toPorts split exists to prevent.
+  - it: keeps the link-local ICMP rule separate from the cluster ICMP rule
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+    asserts:
+      - notExists:
+          path: spec.egress[1].toCIDRSet
+      - equal:
+          path: spec.egress[1].toEntities[0]
+          value: cluster
+      # The cluster rule must NOT pick up the link-local types...
+      - notContains:
+          path: spec.egress[1].icmps[0].fields
+          content:
+            type: 133
+            family: IPv6
+      # ...and the link-local rule must NOT pick up Neighbour Discovery.
+      - notContains:
+          path: spec.egress[2].icmps[0].fields
+          content:
+            type: 135
+            family: IPv6
+      # Two always-present ICMP rules now, so the minimal policy is 3 rules.
+      - lengthEqual:
+          path: spec.egress
+          count: 3
+
   - it: emits no ICMP allowance when egress is absent
     set:
       policies:
@@ -792,5 +883,5 @@ tests:
       - notExists:
           path: spec.egress[1].toFQDNs
       - equal:
-          path: spec.egress[2].toFQDNs[0].matchName
+          path: spec.egress[3].toFQDNs[0].matchName
           value: example.com

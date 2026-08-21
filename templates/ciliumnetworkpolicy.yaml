@@ -191,6 +191,40 @@ spec:
               family: IPv6
             - type: 3
               family: IPv4
+            # IPv6 Destination Unreachable -- the direct counterpart of the
+            # IPv4 type 3 above. ADDED 0.9.0: its absence was a FAMILY
+            # ASYMMETRY, not a deliberate omission, and it was denying real
+            # pod-to-pod traffic (observed from wikijs on the cluster's IPv6
+            # pod CIDR). Same silent-failure class as PMTUD.
+            - type: 1
+              family: IPv6
+    # ALWAYS THIRD, ALWAYS PRESENT. ADDED 0.9.0.
+    #
+    # IPv6 link-local multicast housekeeping, which every dual-stack pod emits
+    # at startup:
+    #     type 133  Router Solicitation          -> ff02::2
+    #     type 143  MLDv2 Listener Report        -> ff02::16
+    #
+    # *** THIS CANNOT BE FOLDED INTO THE RULE ABOVE. *** Those destinations are
+    # link-local multicast, which Cilium classifies as `reserved:world-ipv6` and
+    # NOT as `cluster`. Adding the two types to the `cluster` rule renders valid
+    # YAML, reads as correct, and still denies every one of them.
+    #
+    # Found in production: `AttributablePolicyDrops` came BACK after the Stage
+    # 1/2 egress rollout -- pgadmin, wikijs and plex, each from its own rollout
+    # time -- and was paging on Slack. 0.8.0 fixed Neighbour Discovery and
+    # PMTUD but left these, so the alert became permanent noise again.
+    #
+    # Scoped to ff02::/16, never `world`: link-local multicast is not routable
+    # off the link, so this grants nothing that can leave the node.
+    - toCIDRSet:
+        - cidr: "ff02::/16"
+      icmps:
+        - fields:
+            - type: 133
+              family: IPv6
+            - type: 143
+              family: IPv6
     {{- with $p.egress.toEntities }}
     - toEntities:
         {{- toYaml . | nindent 8 }}
