@@ -90,6 +90,19 @@ policies: []
   #     # qbittorrent is excluded from the plex DNS visibility policy.
   #     dnsVisibility: true
   #
+  #     # NOTE: an ICMP allowance is emitted AUTOMATICALLY whenever egress is
+  #     # enabled, as egress[1], right after the DNS rule. There is no key for
+  #     # it and it cannot be disabled. It permits ICMPv6 Neighbour Discovery
+  #     # (135/136) and, more importantly, the Path MTU Discovery types --
+  #     # ICMPv6 Packet Too Big (2) and IPv4 Destination Unreachable (3).
+  #     #
+  #     # Without it, egress default-deny silently breaks PMTUD, which is an MTU
+  #     # black hole: large transfers hang, nothing is logged, no alert fires.
+  #     # It also turns every Neighbour Solicitation into an ATTRIBUTABLE policy
+  #     # drop, which is the exact shape `AttributablePolicyDrops` exists to
+  #     # catch -- rolling egress out to five namespaces took that alert from a
+  #     # 12-16/h baseline to 319/h before this rule existed.
+  #
   #     # Reserved Cilium entities, e.g. `world` (anything outside the
   #     # cluster) or `cluster` (anything inside it).
   #     #
