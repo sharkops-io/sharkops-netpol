@@ -468,3 +468,226 @@ tests:
       - lengthEqual:
           path: spec.egress
           count: 2
+
+  # --- toEndpoints: in-cluster destinations -------------------------------
+  #
+  # The gap that forced this feature. Piece C Stage 1 reached `homepage`, which
+  # egresses to SEVEN in-cluster services (six in plex, one in longhorn-system),
+  # and `pgadmin` needs authelia/netbox/wikijs. Neither could be expressed: the
+  # chart had toEntities, toCIDR, toFQDNs and extraEgress, but no way to name a
+  # pod. Every such namespace would have shipped raw Cilium YAML in a values
+  # file -- the exact thing this chart exists to prevent.
+  - it: renders toEndpoints with its ports
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toEndpoints:
+              - matchLabels:
+                  io.kubernetes.pod.namespace: plex
+                  app.kubernetes.io/name: sonarr
+                toPorts:
+                  - port: 8989
+                    protocol: TCP
+    asserts:
+      - equal:
+          path: spec.egress[1].toEndpoints[0].matchLabels["app.kubernetes.io/name"]
+          value: sonarr
+      - equal:
+          path: spec.egress[1].toEndpoints[0].matchLabels["io.kubernetes.pod.namespace"]
+          value: plex
+      # Cilium's CRD requires a STRING here. helm-unittest CANNOT catch a CRD
+      # type error -- an int renders valid YAML and every test passes, and only
+      # the API server rejects it. This assertion is the unit-level guard; a
+      # server-side dry-run is still required.
+      - equal:
+          path: spec.egress[1].toPorts[0].ports[0].port
+          value: "8989"
+      - equal:
+          path: spec.egress[1].toPorts[0].ports[0].protocol
+          value: TCP
+
+  # Each entry must become its OWN egress rule. Collapsing them into one rule
+  # with a shared toPorts would let ANY listed endpoint be reached on ANY listed
+  # port -- e.g. sonarr on qbittorrent's 8080. That is a silent over-grant that
+  # renders valid and looks correct.
+  - it: renders each toEndpoints entry as a separate rule so ports do not cross
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toEndpoints:
+              - matchLabels: {app: sonarr}
+                toPorts:
+                  - port: 8989
+              - matchLabels: {app: qbittorrent}
+                toPorts:
+                  - port: 8080
+    asserts:
+      - equal:
+          path: spec.egress[1].toEndpoints[0].matchLabels.app
+          value: sonarr
+      - equal:
+          path: spec.egress[1].toPorts[0].ports[0].port
+          value: "8989"
+      - equal:
+          path: spec.egress[2].toEndpoints[0].matchLabels.app
+          value: qbittorrent
+      - equal:
+          path: spec.egress[2].toPorts[0].ports[0].port
+          value: "8080"
+      - lengthEqual:
+          path: spec.egress[1].toPorts[0].ports
+          count: 1
+
+  - it: renders toEndpoints without ports when none are given
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toEndpoints:
+              - matchLabels: {app: anything}
+    asserts:
+      - equal:
+          path: spec.egress[1].toEndpoints[0].matchLabels.app
+          value: anything
+      - notExists:
+          path: spec.egress[1].toPorts
+
+  # --- toCIDR ports and cidrGroupRef -------------------------------------
+  #
+  # toCIDR could express WHICH addresses but not WHICH PORTS, so the only way to
+  # reach 192.168.1.1:443 was to allow the router on EVERY port. Address scope
+  # was never the weak part; port scope was.
+  - it: renders toCIDR ports so a host is not opened on every port
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toCIDR:
+              - cidr: 192.168.1.1/32
+                toPorts:
+                  - port: 443
+                    protocol: TCP
+    asserts:
+      - equal:
+          path: spec.egress[1].toCIDRSet[0].cidr
+          value: 192.168.1.1/32
+      - equal:
+          path: spec.egress[1].toPorts[0].ports[0].port
+          value: "443"
+
+  # Same separation rule as toEndpoints, and for the same reason: one shared
+  # toPorts across several CIDRs grants every port to every host.
+  - it: renders each ported toCIDR as its own rule so ports do not cross hosts
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toCIDR:
+              - cidr: 192.168.10.2/32
+                toPorts:
+                  - port: 32400
+              - cidr: 192.168.1.1/32
+                toPorts:
+                  - port: 443
+    asserts:
+      - equal:
+          path: spec.egress[1].toCIDRSet[0].cidr
+          value: 192.168.10.2/32
+      - equal:
+          path: spec.egress[1].toPorts[0].ports[0].port
+          value: "32400"
+      - equal:
+          path: spec.egress[2].toCIDRSet[0].cidr
+          value: 192.168.1.1/32
+      - equal:
+          path: spec.egress[2].toPorts[0].ports[0].port
+          value: "443"
+
+  - it: renders cidrGroupRef instead of a literal cidr
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toCIDR:
+              - cidrGroupRef: lan-devices
+                toPorts:
+                  - port: 443
+    asserts:
+      - equal:
+          path: spec.egress[1].toCIDRSet[0].cidrGroupRef
+          value: lan-devices
+      - notExists:
+          path: spec.egress[1].toCIDRSet[0].cidr
+
+  # THE LOAD-BEARING ONE. Deleting an `except` block leaves the `.cidr`
+  # assertion passing while the containment policy silently inverts to
+  # allow-all. Only this assertion sees that. Ported and un-ported entries must
+  # both keep exclusions.
+  - it: keeps exclusions on a ported toCIDR entry
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toCIDR:
+              - cidr: 0.0.0.0/0
+                except: [10.0.0.0/8, 192.168.0.0/16]
+                toPorts:
+                  - port: 443
+    asserts:
+      - equal:
+          path: spec.egress[1].toCIDRSet[0].except[0]
+          value: 10.0.0.0/8
+      - equal:
+          path: spec.egress[1].toCIDRSet[0].except[1]
+          value: 192.168.0.0/16
+      - lengthEqual:
+          path: spec.egress[1].toCIDRSet[0].except
+          count: 2
+      # Without this the test is VACUOUS: `except` already rendered before this
+      # feature existed and `toPorts` was silently ignored, so the assertions
+      # above passed identically with and without the implementation. This line
+      # is what makes it fail today.
+      - equal:
+          path: spec.egress[1].toPorts[0].ports[0].port
+          value: "443"
+
+  # Backwards compatibility: every existing consumer writes toCIDR with no
+  # ports, and those must keep collapsing into ONE toCIDRSet rule so already
+  # deployed policies render byte-identically.
+  - it: still groups un-ported toCIDR entries into a single rule
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toCIDR:
+              - cidr: 10.0.0.0/8
+              - cidr: 172.16.0.0/12
+    asserts:
+      - equal:
+          path: spec.egress[1].toCIDRSet[0].cidr
+          value: 10.0.0.0/8
+      - equal:
+          path: spec.egress[1].toCIDRSet[1].cidr
+          value: 172.16.0.0/12
+      - notExists:
+          path: spec.egress[1].toPorts
+      - notExists:
+          path: spec.egress[2]

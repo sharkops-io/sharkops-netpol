@@ -158,15 +158,70 @@ spec:
     - toEntities:
         {{- toYaml . | nindent 8 }}
     {{- end }}
+    {{- with $p.egress.toEndpoints }}
+    {{- range . }}
+    # IN-CLUSTER destinations, named by label. One rule PER ENTRY, never a
+    # shared toPorts across several endpoints -- Cilium would then permit ANY
+    # listed endpoint on ANY listed port, so `sonarr` would become reachable on
+    # qbittorrent's 8080. That over-grant renders as valid YAML and reads as
+    # correct, which is why the tests assert the separation directly.
+    - toEndpoints:
+        - matchLabels:
+            {{- toYaml .matchLabels | nindent 12 }}
+      {{- with .toPorts }}
+      toPorts:
+        - ports:
+            {{- range . }}
+            # STRING, per Cilium's CRD. `toYaml` passes an int straight through
+            # and helm-unittest cannot catch the type error -- it renders valid
+            # YAML and only the API server rejects it. Quoting here lets a
+            # values file write either form.
+            - port: {{ .port | quote }}
+              {{- with .protocol }}
+              protocol: {{ . }}
+              {{- end }}
+            {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
     {{- with $p.egress.toCIDR }}
+    {{- $ported := list }}
+    {{- $bare := list }}
+    {{- range . }}
+      {{- if .toPorts }}{{ $ported = append $ported . }}{{ else }}{{ $bare = append $bare . }}{{ end }}
+    {{- end }}
+    {{- with $bare }}
+    # Un-ported entries stay grouped in ONE rule, so every policy written before
+    # toPorts existed renders byte-identically and no deployed object churns.
     - toCIDRSet:
         {{- range . }}
-        - cidr: {{ .cidr }}
+        - {{ if .cidrGroupRef }}cidrGroupRef: {{ .cidrGroupRef }}{{ else }}cidr: {{ .cidr }}{{ end }}
           {{- with .except }}
           except:
             {{- toYaml . | nindent 12 }}
           {{- end }}
         {{- end }}
+    {{- end }}
+    {{- range $ported }}
+    # A ported entry gets its OWN rule, for the same reason as toEndpoints
+    # above: a shared toPorts would open every listed port on every listed host.
+    # Concretely, it is the difference between reaching the LAN gateway on 443
+    # and reaching it on everything.
+    - toCIDRSet:
+        - {{ if .cidrGroupRef }}cidrGroupRef: {{ .cidrGroupRef }}{{ else }}cidr: {{ .cidr }}{{ end }}
+          {{- with .except }}
+          except:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      toPorts:
+        - ports:
+            {{- range .toPorts }}
+            - port: {{ .port | quote }}
+              {{- with .protocol }}
+              protocol: {{ . }}
+              {{- end }}
+            {{- end }}
+    {{- end }}
     {{- end }}
     {{- if $p.egress.allowKubeApiserver }}
     # The apiserver is hostNetwork and cannot be named by a vanilla
