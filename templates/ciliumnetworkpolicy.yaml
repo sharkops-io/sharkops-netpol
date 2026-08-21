@@ -154,6 +154,43 @@ spec:
             - port: "53"
               protocol: TCP
         {{- end }}
+    # ALWAYS SECOND, ALWAYS PRESENT, for the same reason the DNS rule is always
+    # first: egress default-deny drops ALL pod-originated ICMP, and both things
+    # that breaks are invisible in different ways.
+    #
+    # VISIBLE: ICMPv6 Neighbour Solicitation (135) and Advertisement (136) to
+    # other pods become ATTRIBUTABLE policy drops -- both identities present --
+    # which is precisely the shape `AttributablePolicyDrops` exists to catch.
+    # Rolling egress out to five namespaces on 2026-08-21 took that alert from a
+    # 12-16/h baseline to 319/h and put it into `pending`. An alert for real
+    # drops that fires permanently on harmless ones is worse than no alert.
+    #
+    # INVISIBLE AND WORSE: it also drops **Packet Too Big** (ICMPv6 type 2) and
+    # IPv4 **Destination Unreachable** (type 3, which carries Fragmentation
+    # Needed). Those two ARE Path MTU Discovery. Dropping them is an MTU black
+    # hole: large transfers hang, nothing is logged, and no alert fires. This
+    # cluster has already lost days to exactly that on the dind runners -- curl
+    # exit 35 at exactly ~127s -- so it is a known, paid-for failure mode.
+    #
+    # Scoped to `cluster` rather than `all`: pod-to-pod neighbour discovery and
+    # in-cluster PMTUD are what default-deny broke. It is NOT scoped to the
+    # kube-dns endpoints, because ND is between arbitrary pod pairs.
+    - toEntities:
+        - cluster
+      icmps:
+        - fields:
+            # Neighbour Discovery. Cilium handles ND below the policy layer so
+            # nothing observably breaks without these, but every solicitation
+            # is recorded as an attributable drop.
+            - type: 135
+              family: IPv6
+            - type: 136
+              family: IPv6
+            # PATH MTU DISCOVERY -- the load-bearing pair. Do not remove.
+            - type: 2
+              family: IPv6
+            - type: 3
+              family: IPv4
     {{- with $p.egress.toEntities }}
     - toEntities:
         {{- toYaml . | nindent 8 }}
