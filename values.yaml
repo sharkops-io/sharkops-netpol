@@ -117,12 +117,53 @@ policies: []
   #     # what makes this a restriction rather than a blanket allow: this is
   #     # the qbittorrent shape -- allow the internet, deny the cluster and
   #     # the LAN.
+  #     #
+  #     # `toPorts` is OPTIONAL and scopes the rule to specific ports. Without
+  #     # it the listed addresses are reachable on EVERY port -- which is the
+  #     # difference between allowing the LAN gateway on 443 and allowing it on
+  #     # everything. A ported entry renders as its own rule, for the same
+  #     # reason as toEndpoints below; un-ported entries stay grouped in one
+  #     # rule so policies written before toPorts existed are unchanged.
   #     toCIDR:
   #       - cidr: 0.0.0.0/0
   #         except:
   #           - 10.0.0.0/8
   #           - 172.16.0.0/12
   #           - 192.168.0.0/16
+  #       - cidr: 192.168.1.1/32
+  #         toPorts:
+  #           - port: 443
+  #             protocol: TCP
+  #
+  #     # An entry may reference a CiliumCIDRGroup instead of repeating a
+  #     # literal range. The cluster has `lan-devices` and `lb-pool`. The
+  #     # group's class labels come along with it, so a reader sees WHY the
+  #     # range is allowed and there is one place to update when it changes.
+  #     # Allow ~2 MINUTES for the identity to be allocated -- it has twice
+  #     # been called broken after 20 seconds.
+  #       - cidrGroupRef: lan-devices
+  #         toPorts:
+  #           - port: 443
+  #             protocol: TCP
+  #
+  #     # IN-CLUSTER destinations, named by label. Use this rather than
+  #     # `toEntities: [cluster]`, which allows the WHOLE cluster.
+  #     #
+  #     # Each entry becomes its OWN egress rule. That is deliberate and the
+  #     # tests assert it: a single rule with several endpoints and a shared
+  #     # toPorts lets Cilium permit ANY listed endpoint on ANY listed port, so
+  #     # `sonarr` becomes reachable on qbittorrent's 8080. The over-grant
+  #     # renders as valid YAML and reads as correct.
+  #     #
+  #     # The namespace must be part of matchLabels -- a bare `app` selector
+  #     # matches that label in EVERY namespace.
+  #     toEndpoints:
+  #       - matchLabels:
+  #           io.kubernetes.pod.namespace: plex
+  #           app.kubernetes.io/name: sonarr
+  #         toPorts:
+  #           - port: 8989
+  #             protocol: TCP
   #
   #     # For anything driving `kubectl exec`, e.g. the wal-switch CronJobs.
   #     # Same reserved `kube-apiserver` entity as the ingress-side
