@@ -239,6 +239,31 @@ spec:
     - toEndpoints:
         - matchLabels:
             {{- toYaml .matchLabels | nindent 12 }}
+          {{- with .matchExpressions }}
+          # OPTIONAL, and the ONLY way to say "in ANY namespace". A
+          # CiliumNetworkPolicy is namespaced, and Cilium INJECTS the policy's
+          # own namespace into any toEndpoints selector that does not already
+          # mention `io.kubernetes.pod.namespace` -- so OMITTING the key does
+          # not mean "any namespace", it means "this policy's namespace", and
+          # the resulting rule is a silent no-op against pods elsewhere.
+          #
+          # Naming the key with `operator: Exists` is what suppresses the
+          # injection: getEndpointSelector only injects when
+          # `!es.HasKey(podPrefixLbl) && !es.HasKey(podAnyPrefixLbl)`
+          # (pkg/k8s/apis/cilium.io/utils/utils.go), and HasKey scans
+          # MatchExpressions as well as MatchLabels
+          # (pkg/policy/api/selector.go). Verified against the live agent, not
+          # just the source: an existing cross-namespace rule realises in
+          # `cilium-dbg policy get` as `any:io.kubernetes.pod.namespace: <ns>`
+          # with no second, injected match.
+          #
+          # PAIR IT WITH A matchLabels THAT IS ACTUALLY SELECTIVE. Dropping the
+          # namespace constraint means a bare `app: foo` now matches that label
+          # in EVERY namespace, so prefer labels an operator sets and no user
+          # can forge, and require more than one.
+          matchExpressions:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
       {{- with .toPorts }}
       toPorts:
         - ports:

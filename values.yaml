@@ -178,6 +178,36 @@ policies: []
   #           - port: 8989
   #             protocol: TCP
   #
+  #     # `matchExpressions` is optional, and it is the ONLY way to say "in ANY
+  #     # namespace".
+  #     #
+  #     # OMITTING `io.kubernetes.pod.namespace` DOES NOT MEAN "ANY NAMESPACE".
+  #     # A CiliumNetworkPolicy is namespaced, and Cilium injects the policy's
+  #     # own namespace into any toEndpoints selector that does not already
+  #     # mention that key -- so an unqualified selector silently means "this
+  #     # policy's namespace only" and matches nothing elsewhere. Naming the key
+  #     # with `operator: Exists` suppresses the injection.
+  #     #
+  #     # Use it when the destination is defined by WHAT IT IS rather than where
+  #     # it lives, and where a per-namespace list would rot: cnpg-system must
+  #     # reach the CNPG instance manager in every namespace that holds a
+  #     # database, and spelling that per-namespace means adding a database
+  #     # silently breaks the operator for it.
+  #     #
+  #     # PAIR IT WITH A SELECTIVE matchLabels. Dropping the namespace
+  #     # constraint means a bare `app: foo` matches that label in every
+  #     # namespace, so prefer labels an operator sets and a user cannot forge,
+  #     # and require more than one.
+  #       - matchLabels:
+  #           cnpg.io/podRole: instance
+  #           app.kubernetes.io/managed-by: cloudnative-pg
+  #         matchExpressions:
+  #           - key: io.kubernetes.pod.namespace
+  #             operator: Exists
+  #         toPorts:
+  #           - port: 8000
+  #             protocol: TCP
+  #
   #     # For anything driving `kubectl exec`, e.g. the wal-switch CronJobs.
   #     # Same reserved `kube-apiserver` entity as the ingress-side
   #     # allowKubeApiserver, but on the egress list.
