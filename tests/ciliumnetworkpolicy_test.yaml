@@ -559,6 +559,113 @@ tests:
           path: spec.egress[3].toPorts[0].ports
           count: 1
 
+  # --- toEndpoints matchExpressions: the ANY-NAMESPACE selector -----------
+  #
+  # The gap that forced this: cnpg-system's operator must reach the CNPG
+  # instance manager in EVERY namespace that holds a database. Spelled with one
+  # matchLabels entry per namespace, adding a database silently breaks the
+  # operator for it -- the new Cluster hangs at "Setting up primary" while
+  # cnpg-system stays Running and Ready, so the symptom is remote from the
+  # cause. The rule had to live in extraEgress as raw Cilium YAML, which is the
+  # exact thing this chart exists to prevent.
+  #
+  # OMITTING the namespace key does NOT mean "any namespace" -- Cilium injects
+  # the policy's own namespace, so the rule becomes a silent no-op. Naming the
+  # key with `operator: Exists` suppresses the injection.
+  - it: renders matchExpressions alongside matchLabels for an any-namespace rule
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toEndpoints:
+              - matchLabels:
+                  cnpg.io/podRole: instance
+                  app.kubernetes.io/managed-by: cloudnative-pg
+                matchExpressions:
+                  - key: io.kubernetes.pod.namespace
+                    operator: Exists
+                toPorts:
+                  - port: 8000
+                    protocol: TCP
+    asserts:
+      - equal:
+          path: spec.egress[3].toEndpoints[0].matchLabels["cnpg.io/podRole"]
+          value: instance
+      - equal:
+          path: spec.egress[3].toEndpoints[0].matchLabels["app.kubernetes.io/managed-by"]
+          value: cloudnative-pg
+      # THE LOAD-BEARING ASSERTION. Without this key present and spelled
+      # exactly like this, Cilium adds its own
+      # `io.kubernetes.pod.namespace: <policy namespace>` match and the rule
+      # quietly stops matching anything outside the policy's namespace.
+      - equal:
+          path: spec.egress[3].toEndpoints[0].matchExpressions[0].key
+          value: io.kubernetes.pod.namespace
+      - equal:
+          path: spec.egress[3].toEndpoints[0].matchExpressions[0].operator
+          value: Exists
+      - lengthEqual:
+          path: spec.egress[3].toEndpoints[0].matchExpressions
+          count: 1
+      - equal:
+          path: spec.egress[3].toPorts[0].ports[0].port
+          value: "8000"
+
+  # The negative control for the assertion above: an entry WITHOUT
+  # matchExpressions must not grow the key. If this ever fails, every existing
+  # policy in the cluster has silently changed shape.
+  - it: omits matchExpressions entirely when the entry does not set it
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toEndpoints:
+              - matchLabels:
+                  io.kubernetes.pod.namespace: plex
+                  app.kubernetes.io/name: sonarr
+    asserts:
+      - equal:
+          path: spec.egress[3].toEndpoints[0].matchLabels["app.kubernetes.io/name"]
+          value: sonarr
+      - notExists:
+          path: spec.egress[3].toEndpoints[0].matchExpressions
+
+  # matchExpressions must not leak across entries -- same separation rule as
+  # ports. An any-namespace selector on one destination must not silently widen
+  # the next one.
+  - it: keeps matchExpressions scoped to its own toEndpoints entry
+    set:
+      policies:
+        - name: app
+          podSelector: {}
+          egress:
+            enabled: true
+            toEndpoints:
+              - matchLabels: {app: everywhere}
+                matchExpressions:
+                  - key: io.kubernetes.pod.namespace
+                    operator: Exists
+                toPorts:
+                  - port: 8000
+              - matchLabels: {app: local-only}
+                toPorts:
+                  - port: 9090
+    asserts:
+      - exists:
+          path: spec.egress[3].toEndpoints[0].matchExpressions
+      - notExists:
+          path: spec.egress[4].toEndpoints[0].matchExpressions
+      - equal:
+          path: spec.egress[4].toEndpoints[0].matchLabels.app
+          value: local-only
+      - equal:
+          path: spec.egress[4].toPorts[0].ports[0].port
+          value: "9090"
+
   - it: renders toEndpoints without ports when none are given
     set:
       policies:
