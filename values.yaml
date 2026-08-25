@@ -219,9 +219,24 @@ policies: []
   #     # DNS rule applies. The key exists so the interface is complete;
   #     # nothing should USE it until DNS visibility is enabled for that
   #     # namespace.
+  #     #
+  #     # `toPorts` is OPTIONAL and scopes the entry to specific ports, exactly
+  #     # like toCIDR above. A ported entry renders as its OWN rule; un-ported
+  #     # entries stay grouped in one rule so policies written before toPorts
+  #     # existed are unchanged.
+  #     #
+  #     # PORT-SCOPE ANY NAME THAT RESOLVES TO A HOST YOU DO NOT OWN OUTRIGHT.
+  #     # A name is not a service: `*.plex.direct` resolves to the LAN machine
+  #     # running Plex, which also runs a container stack, a CI runner and a DNS
+  #     # resolver. Un-ported, that rule is not "allow Plex" -- it is "allow that
+  #     # entire host on every port", and it reads as correct either way.
   #     toFQDNs:
   #       - matchName: index.docker.io
   #       - matchPattern: "*.example.com"
+  #       - matchPattern: "*.plex.direct"
+  #         toPorts:
+  #           - port: 32400
+  #             protocol: TCP
   #
   #     # Raw Cilium egress rules, appended verbatim.
   #     extraEgress: []

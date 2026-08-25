@@ -327,6 +327,21 @@ spec:
         - kube-apiserver
     {{- end }}
     {{- with $p.egress.toFQDNs }}
+    {{- /*
+      Un-ported entries stay grouped in ONE rule so pre-toPorts policies render
+      byte-identically. This is a TEMPLATE comment, not a YAML one, and it sits
+      HERE rather than beside the bare branch on purpose: a rendered comment is
+      still a manifest diff. Putting it next to `- toFQDNs:` churned 8 unrelated
+      live releases in testing -- identical policy, but helmfile upgrades every
+      one of them. A template comment on its own line also leaves a blank line
+      behind, so it must sit between directives that already chomp whitespace.
+    */}}
+    {{- $ported := list }}
+    {{- $bare := list }}
+    {{- range . }}
+      {{- if .toPorts }}{{ $ported = append $ported . }}{{ else }}{{ $bare = append $bare . }}{{ end }}
+    {{- end }}
+    {{- with $bare }}
     # toFQDNs requires the Cilium DNS proxy to be in path for the selected
     # endpoints, which happens only where an L7 DNS rule applies -- i.e. only
     # when `dnsVisibility: true` is set above. Setting toFQDNs without it does
@@ -334,6 +349,30 @@ spec:
     # allowlist were wrong.
     - toFQDNs:
         {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- range $ported }}
+    # A ported entry gets its OWN rule, for the same reason as toEndpoints and
+    # toCIDR above: a shared toPorts would open every listed port on every
+    # listed NAME.
+    #
+    # This matters more for FQDNs than it looks, because a name can resolve to
+    # a host that runs far more than the one service being allowed. Concretely:
+    # `*.plex.direct` resolves to the LAN machine hosting Plex, which also runs
+    # a container stack, a CI runner and a DNS resolver -- so an un-ported rule
+    # for it is not "allow Plex", it is "allow that whole host".
+    - toFQDNs:
+        {{- toYaml (list (omit . "toPorts")) | nindent 8 }}
+      toPorts:
+        - ports:
+            {{- range .toPorts }}
+            # STRING, per Cilium's CRD -- same reason as every other port list
+            # in this template.
+            - port: {{ .port | quote }}
+              {{- with .protocol }}
+              protocol: {{ . }}
+              {{- end }}
+            {{- end }}
+    {{- end }}
     {{- end }}
     {{- with $p.egress.extraEgress }}
     {{- toYaml . | nindent 4 }}
