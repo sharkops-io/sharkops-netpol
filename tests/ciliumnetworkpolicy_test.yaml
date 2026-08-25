@@ -361,6 +361,121 @@ tests:
           path: spec.egress[3].toFQDNs[1].matchPattern
           value: "*.example.com"
 
+  - it: renders each ported toFQDN as its own rule so ports do not cross names
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            dnsVisibility: true
+            toFQDNs:
+              - matchPattern: "*.plex.direct"
+                toPorts:
+                  - port: 32400
+                    protocol: TCP
+              - matchName: api.github.com
+                toPorts:
+                  - port: 443
+                    protocol: TCP
+    asserts:
+      - equal:
+          path: spec.egress[3].toFQDNs[0].matchPattern
+          value: "*.plex.direct"
+      - equal:
+          path: spec.egress[3].toPorts[0].ports[0].port
+          value: "32400"
+      - lengthEqual:
+          path: spec.egress[3].toFQDNs
+          count: 1
+      - equal:
+          path: spec.egress[4].toFQDNs[0].matchName
+          value: api.github.com
+      - equal:
+          path: spec.egress[4].toPorts[0].ports[0].port
+          value: "443"
+      # THE LOAD-BEARING ONE. Without it the two names could render into a
+      # SINGLE rule sharing both ports, which would reach plex.direct on 443 and
+      # github on 32400. That over-grant is valid YAML and reads as correct.
+      - lengthEqual:
+          path: spec.egress[4].toFQDNs
+          count: 1
+
+  - it: does not leak toPorts into the FQDN selector itself
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            dnsVisibility: true
+            toFQDNs:
+              - matchName: api.github.com
+                toPorts:
+                  - port: 443
+    asserts:
+      # `toPorts` is a rule-level key, not part of a FQDNSelector. Rendering the
+      # entry verbatim would nest it inside toFQDNs[0], which Cilium's CRD
+      # rejects -- and a rejected CiliumNetworkPolicy looks identical to an
+      # accepted one until you query for flows that never arrive.
+      - notExists:
+          path: spec.egress[3].toFQDNs[0].toPorts
+      - equal:
+          path: spec.egress[3].toFQDNs[0].matchName
+          value: api.github.com
+
+  # Backwards compatibility: every existing consumer writes toFQDNs with no
+  # ports, and those must keep collapsing into ONE rule so already deployed
+  # policies render byte-identically.
+  - it: still groups un-ported toFQDN entries into a single rule
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            dnsVisibility: true
+            toFQDNs:
+              - matchName: index.docker.io
+              - matchPattern: "*.example.com"
+    asserts:
+      - lengthEqual:
+          path: spec.egress[3].toFQDNs
+          count: 2
+      - notExists:
+          path: spec.egress[3].toPorts
+      - notExists:
+          path: spec.egress[4]
+
+  - it: keeps ported and un-ported toFQDN entries in separate rules
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+            dnsVisibility: true
+            toFQDNs:
+              - matchName: index.docker.io
+              - matchPattern: "*.plex.direct"
+                toPorts:
+                  - port: 32400
+                    protocol: TCP
+    asserts:
+      # Un-ported entries group first, on every port, as before.
+      - equal:
+          path: spec.egress[3].toFQDNs[0].matchName
+          value: index.docker.io
+      - notExists:
+          path: spec.egress[3].toPorts
+      # The ported one follows as its own rule.
+      - equal:
+          path: spec.egress[4].toFQDNs[0].matchPattern
+          value: "*.plex.direct"
+      - equal:
+          path: spec.egress[4].toPorts[0].ports[0].port
+          value: "32400"
+
   - it: appends extraEgress verbatim
     set:
       policies:
