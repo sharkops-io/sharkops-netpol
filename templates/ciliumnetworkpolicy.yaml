@@ -33,8 +33,8 @@ the apiserver rule, so as not to orphan the CNPs already deployed in five
 live namespaces.
 */}}
 {{- range $p := .Values.policies }}
-{{- if or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes (and $p.egress $p.egress.enabled) }}
-{{- $hasIngress := or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes }}
+{{- if or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes $p.extraCiliumIngress (and $p.egress $p.egress.enabled) }}
+{{- $hasIngress := or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes $p.extraCiliumIngress }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -113,6 +113,45 @@ spec:
               {{- end }}
             {{- end }}
       {{- end }}
+    {{- end }}
+    {{- with $p.extraCiliumIngress }}
+    # RAW CILIUM INGRESS RULES, appended verbatim -- the ingress mirror of
+    # `egress.extraEgress`.
+    #
+    # THE ONE THING IT EXISTS FOR IS INGRESS ICMP, and that is not a niche.
+    # `extraIngress` renders into the VANILLA NetworkPolicy, which has no
+    # concept of ICMP at all, and the `icmps:` hooks in this file are all on
+    # the egress side. So before 0.12.0 there was NO WAY to allow an inbound
+    # ICMP type -- while the automatic egress rule above allows five of them.
+    # That asymmetry was the bug, not a missing feature.
+    #
+    # It cost the CoreDNS policy. Applied 2026-08-26 and withdrawn the same
+    # day: default-deny ingress ALSO denies inbound **Destination Unreachable**
+    # (IPv4 type 3, IPv6 type 1) from clients answering a LATE DNS reply -- they
+    # already had their answer from the other replica, so the response hit a
+    # closed socket. Harmless, and CoreDNS ignores them, but it pinned
+    # `AttributablePolicyDrops` firing continuously, and a permanently-firing
+    # alert is worse than an un-policed resolver. Note the shape of that
+    # failure: DNS never broke, no pod restarted, and every probe passed. The
+    # policy was CORRECT and still had to come out.
+    #
+    # THE GENERAL LESSON, which is why this hatch is raw rather than a typed
+    # `allowIcmp` list: a capture filtered to the port you are policing is
+    # structurally blind to everything else the same default-deny rule will
+    # drop. The CoreDNS derivation missed the kubelet probes on 8080/8181 the
+    # same way (caught by reading the Deployment) and then missed the ICMP
+    # (caught in production). What lands here next will be something else again.
+    #
+    # Content is NOT validated or reshaped -- it is spliced into the `ingress:`
+    # list as written, so it must be valid CiliumNetworkPolicy ingress YAML.
+    # Remember that Cilium's CRD wants `port` as a STRING.
+    #
+    # *** SETTING THIS ALONE MAKES THE ENDPOINT DEFAULT-DENY FOR INGRESS. ***
+    # Any CNP carrying ingress content does, exactly as any egress content makes
+    # it default-deny for egress. Adding an ICMP allowance to a workload that
+    # had no ingress policy does not "also allow ICMP" -- it denies everything
+    # else. Pair it with the real ingress rules, never on its own.
+    {{- toYaml . | nindent 4 }}
     {{- end }}
   {{- end }}
   {{- if and $p.egress $p.egress.enabled }}

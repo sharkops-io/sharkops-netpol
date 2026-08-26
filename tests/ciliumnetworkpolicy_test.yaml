@@ -1107,3 +1107,173 @@ tests:
       - equal:
           path: spec.egress[3].toFQDNs[0].matchName
           value: example.com
+
+  # --------------------------------------------------------------------------
+  # extraCiliumIngress -- ADDED 0.12.0
+  #
+  # The ingress mirror of extraEgress. It exists because there was NO WAY to
+  # allow an inbound ICMP type: extraIngress renders into the vanilla
+  # NetworkPolicy, which has no ICMP, and every icmps: hook was egress-only.
+  # That asymmetry cost the CoreDNS policy, which was applied and withdrawn on
+  # 2026-08-26 -- correct, probes all passing, DNS never broken, and still
+  # unusable because it pinned AttributablePolicyDrops firing on inbound
+  # Destination Unreachable.
+  # --------------------------------------------------------------------------
+  - it: appends extraCiliumIngress verbatim
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          extraCiliumIngress:
+            - fromEntities:
+                - cluster
+              icmps:
+                - fields:
+                    - type: 3
+                      family: IPv4
+                    - type: 1
+                      family: IPv6
+    asserts:
+      - equal:
+          path: spec.ingress[0].fromEntities[0]
+          value: cluster
+      - equal:
+          path: spec.ingress[0].icmps[0].fields[0].type
+          value: 3
+      - equal:
+          path: spec.ingress[0].icmps[0].fields[0].family
+          value: IPv4
+      - equal:
+          path: spec.ingress[0].icmps[0].fields[1].type
+          value: 1
+      - equal:
+          path: spec.ingress[0].icmps[0].fields[1].family
+          value: IPv6
+
+  # The whole point is that it works WITHOUT any of the three allow* keys --
+  # otherwise a workload whose only need is inbound ICMP could not use it.
+  - it: creates the CNP when extraCiliumIngress is the only key set
+    set:
+      policies:
+        - name: alpha
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+          extraCiliumIngress:
+            - fromEntities:
+                - cluster
+              icmps:
+                - fields:
+                    - type: 1
+                      family: IPv6
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: CiliumNetworkPolicy
+      - equal:
+          path: metadata.name
+          value: alpha-cilium-ingress
+      - equal:
+          path: spec.endpointSelector.matchLabels.k8s-app
+          value: kube-dns
+      - notExists:
+          path: spec.egress
+
+  # ORDER IS A CHURN CONTRACT. The entity blocks were emitted in this order in
+  # every release before 0.12.0, so extraCiliumIngress must land LAST -- an
+  # entry inserted ahead of them renders valid, reads correct, and rewrites the
+  # ingress list of every deployed object that also carries raw rules.
+  - it: appends extraCiliumIngress after the entity blocks, never before
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          allowCiliumIngress: true
+          allowNodes: true
+          allowKubeApiserver: true
+          extraCiliumIngress:
+            - fromEntities:
+                - cluster
+              icmps:
+                - fields:
+                    - type: 3
+                      family: IPv4
+    asserts:
+      - equal:
+          path: spec.ingress[0].fromEntities[0]
+          value: ingress
+      - equal:
+          path: spec.ingress[1].fromEntities[0]
+          value: host
+      - equal:
+          path: spec.ingress[2].fromEntities[0]
+          value: kube-apiserver
+      - equal:
+          path: spec.ingress[3].icmps[0].fields[0].type
+          value: 3
+      - notExists:
+          path: spec.ingress[4]
+
+  # ZERO CHURN. Absent, it must change nothing -- 25 live releases were rendered
+  # against 0.11.0 and 0.12.0 and diffed byte-for-byte to prove this, but the
+  # assertion belongs here too so a later edit cannot quietly break it.
+  - it: emits no ingress section when extraCiliumIngress is absent
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          egress:
+            enabled: true
+    asserts:
+      - notExists:
+          path: spec.ingress
+
+  # A raw hatch must not be reshaped. Anything Cilium accepts on an ingress rule
+  # has to survive, not just the ICMP case that motivated it.
+  - it: passes through non-ICMP raw ingress rules unchanged
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          extraCiliumIngress:
+            - fromCIDRSet:
+                - cidr: 192.168.20.0/24
+              toPorts:
+                - ports:
+                    - port: "9100"
+                      protocol: TCP
+    asserts:
+      - equal:
+          path: spec.ingress[0].fromCIDRSet[0].cidr
+          value: 192.168.20.0/24
+      - equal:
+          path: spec.ingress[0].toPorts[0].ports[0].port
+          value: "9100"
+
+  # TWO entries, because every other test here passes ONE -- and a template that
+  # emits only `first .` renders perfectly valid YAML that satisfies all of them.
+  # Caught by mutation-testing this suite, not by review.
+  - it: emits every extraCiliumIngress entry, not just the first
+    set:
+      policies:
+        - name: alpha
+          podSelector: {}
+          extraCiliumIngress:
+            - fromEntities:
+                - cluster
+              icmps:
+                - fields:
+                    - type: 1
+                      family: IPv6
+            - fromCIDRSet:
+                - cidr: 10.0.0.0/8
+    asserts:
+      - equal:
+          path: spec.ingress[0].icmps[0].fields[0].family
+          value: IPv6
+      - equal:
+          path: spec.ingress[1].fromCIDRSet[0].cidr
+          value: 10.0.0.0/8
+      - notExists:
+          path: spec.ingress[2]

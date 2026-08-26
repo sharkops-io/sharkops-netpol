@@ -46,7 +46,43 @@ policies: []
   #       protocol: TCP
   #
   #   # Raw NetworkPolicy ingress rules, appended verbatim.
+  #   #
+  #   # NOTE THIS RENDERS INTO THE VANILLA NetworkPolicy, which has NO CONCEPT
+  #   # OF ICMP. For inbound ICMP -- or anything else only Cilium can express --
+  #   # use extraCiliumIngress below.
   #   extraIngress: []
+  #
+  #   # Raw CILIUM ingress rules, appended verbatim to the CiliumNetworkPolicy's
+  #   # `ingress:` list. The mirror of egress.extraEgress. ADDED 0.12.0.
+  #   #
+  #   # THE REASON IT EXISTS IS INBOUND ICMP. `extraIngress` above cannot carry
+  #   # it, and every `icmps:` hook in this chart is on the EGRESS side -- so
+  #   # before 0.12.0 there was no way to allow an inbound ICMP type while the
+  #   # automatic egress rule allowed five of them. That asymmetry was the bug.
+  #   #
+  #   # It cost the CoreDNS policy, applied and withdrawn on 2026-08-26. Making
+  #   # CoreDNS default-deny on ingress also denied inbound Destination
+  #   # Unreachable (IPv4 type 3, IPv6 type 1) from clients answering a LATE DNS
+  #   # reply -- harmless, ignored by CoreDNS, and enough to pin
+  #   # AttributablePolicyDrops firing forever. DNS never broke and no pod
+  #   # restarted: the policy was CORRECT and still had to come out.
+  #   #
+  #   # *** SETTING THIS ALONE MAKES THE ENDPOINT DEFAULT-DENY FOR INGRESS, ***
+  #   # exactly as any egress content makes it default-deny for egress. Adding
+  #   # an ICMP allowance to a workload with no ingress policy does not "also
+  #   # allow ICMP" -- it denies everything else. Pair it with the real rules.
+  #   #
+  #   # Spliced in as written: valid CiliumNetworkPolicy ingress YAML, and
+  #   # remember Cilium's CRD wants `port` as a STRING.
+  #   extraCiliumIngress:
+  #     - fromEntities:
+  #         - cluster
+  #       icmps:
+  #         - fields:
+  #             - type: 3
+  #               family: IPv4
+  #             - type: 1
+  #               family: IPv6
 
   #   # Traffic from a cluster NODE. Needed by any workload behind a NodePort:
   #   # the node DNATs the external connection to a pod that may live on a
