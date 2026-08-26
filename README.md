@@ -53,9 +53,42 @@ policies:
       - port: "3000"
         protocol: TCP
 
-    # Raw NetworkPolicy ingress rules, appended verbatim.
+    # Raw NetworkPolicy ingress rules, appended verbatim. Renders into the
+    # VANILLA NetworkPolicy, which has no concept of ICMP.
     extraIngress: []
+
+    # Raw CILIUM ingress rules, appended verbatim to the CiliumNetworkPolicy.
+    # The mirror of egress.extraEgress, and the only way to allow inbound ICMP.
+    extraCiliumIngress:
+      - fromEntities:
+          - cluster
+        icmps:
+          - fields:
+              - type: 3
+                family: IPv4
+              - type: 1
+                family: IPv6
 ```
+
+### `extraCiliumIngress` and inbound ICMP
+
+`extraIngress` renders into the vanilla `NetworkPolicy`, which cannot express
+ICMP, and every `icmps:` hook in this chart is on the **egress** side. So until
+0.12.0 there was no way to allow an inbound ICMP type — while the automatic
+egress rule allowed five of them. That asymmetry was the bug.
+
+It cost the CoreDNS policy, applied and withdrawn the same day on 2026-08-26.
+Making CoreDNS default-deny on ingress also denied inbound **Destination
+Unreachable** (IPv4 type 3, IPv6 type 1) from clients answering a *late* DNS
+reply — they already had their answer from the other replica, so the response
+hit a closed socket. Harmless, ignored by CoreDNS, and enough to pin
+`AttributablePolicyDrops` firing continuously. DNS never broke and no pod
+restarted: the policy was correct and still had to come out.
+
+**Setting this alone makes the endpoint default-deny for ingress**, exactly as
+any egress content makes it default-deny for egress. Adding an ICMP allowance to
+a workload that has no ingress policy does not "also allow ICMP" — it denies
+everything else. Pair it with the real ingress rules.
 
 ## Installation
 
