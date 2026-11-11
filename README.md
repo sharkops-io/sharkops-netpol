@@ -93,11 +93,12 @@ everything else. Pair it with the real ingress rules.
 ## Installation
 
 ```bash
-helm install <release-name> oci://registry.gitlab.com/sharkops/helm-charts/sharkops-netpol \
+helm install <release-name> oci://ghcr.io/sharkops-io/charts/sharkops-netpol \
   --namespace <namespace> \
   -f values.yaml
 ```
 
 ## License
 
-MIT, see `LICENSE`.
+
+Apache License 2.0. See [LICENSE](LICENSE).
