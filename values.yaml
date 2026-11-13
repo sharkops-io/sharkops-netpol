@@ -1,6 +1,6 @@
 # One release per namespace. `policies` is a LIST so a single release covers
-# every workload in that namespace -- the openbao namespace needs bao and its
-# snapshot CronJob, monitoring needs several.
+# every workload in that namespace -- e.g. a secrets-store namespace may need
+# the server and its snapshot CronJob, monitoring needs several.
 #
 # Egress is opt-in per entry via the `egress` key below. Setting it enables
 # default-deny egress for the selected pods -- see the `egress` block in the
@@ -8,8 +8,8 @@
 policies: []
   # - name: wikijs
   #   # Standard Kubernetes label selector. `{}` selects EVERY pod in the
-  #   # namespace, which is sometimes exactly right (see openbao) and
-  #   # sometimes far too broad.
+  #   # namespace, which is sometimes exactly right and sometimes far too
+  #   # broad.
   #   podSelector:
   #     matchLabels:
   #       app.kubernetes.io/name: wiki
@@ -21,8 +21,8 @@ policies: []
   #   # REQUIRED for anything reachable on a public hostname. Renders a
   #   # CiliumNetworkPolicy, NOT a NetworkPolicy rule, because Cilium ingress
   #   # traffic arrives with the reserved `ingress` identity which a vanilla
-  #   # policy cannot name. Proven in talos docs/policy-lab: without it a
-  #   # public app returns HTTP 000 and times out.
+  #   # policy cannot name. Measured against a real Ingress through Cilium:
+  #   # without it a public app returns HTTP 000 and times out.
   #   allowCiliumIngress: true
   #
   #   # Optional. Omit to allow the ingress proxy on every port.
@@ -32,8 +32,8 @@ policies: []
   #
   #   # For admission webhooks. The apiserver is hostNetwork, same problem as
   #   # Cilium ingress above -- a vanilla NetworkPolicy cannot name it. The
-  #   # longhorn-webhook precedent instead allows the whole port with no
-  #   # `from:`, which admits any source on it; this names the real caller
+  #   # usual workaround allows the whole webhook port with no `from:`, which
+  #   # admits any source on it; this names the real caller
   #   # precisely via Cilium's reserved `kube-apiserver` entity. Renders into
   #   # the SAME CiliumNetworkPolicy as allowCiliumIngress, as a second
   #   # ingress rule, not a second object.
@@ -60,12 +60,11 @@ policies: []
   #   # before 0.12.0 there was no way to allow an inbound ICMP type while the
   #   # automatic egress rule allowed five of them. That asymmetry was the bug.
   #   #
-  #   # It cost the CoreDNS policy, applied and withdrawn on 2026-08-26. Making
-  #   # CoreDNS default-deny on ingress also denied inbound Destination
-  #   # Unreachable (IPv4 type 3, IPv6 type 1) from clients answering a LATE DNS
-  #   # reply -- harmless, ignored by CoreDNS, and enough to pin
-  #   # AttributablePolicyDrops firing forever. DNS never broke and no pod
-  #   # restarted: the policy was CORRECT and still had to come out.
+  #   # Example: making CoreDNS default-deny on ingress also denies inbound
+  #   # Destination Unreachable (IPv4 type 3, IPv6 type 1) from clients
+  #   # answering a LATE DNS reply -- harmless, ignored by CoreDNS, and enough to
+  #   # keep a policy-drop alert firing forever. DNS never breaks and no pod
+  #   # restarts: the policy is CORRECT and still has to come out.
   #   #
   #   # *** SETTING THIS ALONE MAKES THE ENDPOINT DEFAULT-DENY FOR INGRESS, ***
   #   # exactly as any egress content makes it default-deny for egress. Adding
@@ -122,8 +121,8 @@ policies: []
   #     # egress. To observe WITHOUT restricting, pair it with
   #     # `toEntities: [all]` -- and then read the additive-union warning
   #     # below, because that pairing hands back whatever an existing
-  #     # restrictive egress NetworkPolicy was denying. That is exactly why
-  #     # qbittorrent is excluded from the plex DNS visibility policy.
+  #     # restrictive egress NetworkPolicy was denying. Exclude any workload
+  #     # that carries such a policy from a DNS-visibility selector.
   #     dnsVisibility: true
   #
   #     # NOTE: an ICMP allowance is emitted AUTOMATICALLY whenever egress is
@@ -135,9 +134,9 @@ policies: []
   #     # Without it, egress default-deny silently breaks PMTUD, which is an MTU
   #     # black hole: large transfers hang, nothing is logged, no alert fires.
   #     # It also turns every Neighbour Solicitation into an ATTRIBUTABLE policy
-  #     # drop, which is the exact shape `AttributablePolicyDrops` exists to
-  #     # catch -- rolling egress out to five namespaces took that alert from a
-  #     # 12-16/h baseline to 319/h before this rule existed.
+  #     # drop, which is the exact shape a policy-drop alert exists to catch --
+  #     # without this rule, rolling egress out to a handful of namespaces can
+  #     # raise such an alert's rate twenty-fold.
   #
   #     # Reserved Cilium entities, e.g. `world` (anything outside the
   #     # cluster) or `cluster` (anything inside it).
@@ -146,16 +145,15 @@ policies: []
   #     #
   #     # A permissive entry here UNIONS with any restrictive NetworkPolicy
   #     # already on the same pod and hands back what that policy was denying.
-  #     # This is not hypothetical: qbittorrent carries
-  #     # qbittorrent-restrict-egress, which denies all of RFC1918 so a
-  #     # compromised torrent client cannot pivot to the LAN. A
-  #     # `toEntities: [all]` rule on that pod silently undoes it -- which is
-  #     # why qbittorrent is excluded from the plex DNS visibility policy.
+  #     # For example, a torrent client may carry an egress NetworkPolicy that
+  #     # denies all of RFC1918 so a compromise cannot pivot to the LAN. A
+  #     # `toEntities: [all]` rule on that pod silently undoes it -- so such a
+  #     # pod must be excluded from any DNS-visibility policy that adds one.
   #     #
   #     # Before widening egress on any workload, check for an existing egress
   #     # NetworkPolicy on it. Also check for an ALLOW-ALL egress rule
-  #     # (policyTypes includes Egress with an empty rule, as netbox-valkey
-  #     # has) -- that unions with and neutralises anything you add.
+  #     # (policyTypes includes Egress with an empty rule, as some charts ship)
+  #     # -- that unions with and neutralises anything you add.
   #     toEntities:
   #       - world
   #       - cluster
@@ -163,9 +161,8 @@ policies: []
   #     # CIDR-based egress. Renders as Cilium's `toCIDRSet` field, NOT
   #     # `toCIDR` -- toCIDRSet is what carries `except`. The values key stays
   #     # `toCIDR` here for readability; the template maps it. `except` is
-  #     # what makes this a restriction rather than a blanket allow: this is
-  #     # the qbittorrent shape -- allow the internet, deny the cluster and
-  #     # the LAN.
+  #     # what makes this a restriction rather than a blanket allow: allow the
+  #     # internet, deny the cluster and the LAN.
   #     #
   #     # `toPorts` is OPTIONAL and scopes the rule to specific ports. Without
   #     # it the listed addresses are reachable on EVERY port -- which is the
@@ -185,11 +182,11 @@ policies: []
   #             protocol: TCP
   #
   #     # An entry may reference a CiliumCIDRGroup instead of repeating a
-  #     # literal range. The cluster has `lan-devices` and `lb-pool`. The
+  #     # literal range (e.g. groups named `lan-devices` or `lb-pool`). The
   #     # group's class labels come along with it, so a reader sees WHY the
   #     # range is allowed and there is one place to update when it changes.
-  #     # Allow ~2 MINUTES for the identity to be allocated -- it has twice
-  #     # been called broken after 20 seconds.
+  #     # Allow ~2 MINUTES for the identity to be allocated -- it is easy to
+  #     # call it broken after 20 seconds.
   #       - cidrGroupRef: lan-devices
   #         toPorts:
   #           - port: 443
@@ -244,7 +241,8 @@ policies: []
   #           - port: 8000
   #             protocol: TCP
   #
-  #     # For anything driving `kubectl exec`, e.g. the wal-switch CronJobs.
+  #     # For anything driving `kubectl exec`, e.g. a CronJob that execs into
+  #     # a database pod.
   #     # Same reserved `kube-apiserver` entity as the ingress-side
   #     # allowKubeApiserver, but on the egress list.
   #     allowKubeApiserver: true
@@ -262,10 +260,11 @@ policies: []
   #     # existed are unchanged.
   #     #
   #     # PORT-SCOPE ANY NAME THAT RESOLVES TO A HOST YOU DO NOT OWN OUTRIGHT.
-  #     # A name is not a service: `*.plex.direct` resolves to the LAN machine
-  #     # running Plex, which also runs a container stack, a CI runner and a DNS
-  #     # resolver. Un-ported, that rule is not "allow Plex" -- it is "allow that
-  #     # entire host on every port", and it reads as correct either way.
+  #     # A name is not a service: `*.plex.direct` resolves to whatever machine
+  #     # runs Plex, and that machine may also run a container stack, a CI
+  #     # runner or a DNS resolver. Un-ported, that rule is not "allow Plex" --
+  #     # it is "allow that entire host on every port", and it reads as correct
+  #     # either way.
   #     toFQDNs:
   #       - matchName: index.docker.io
   #       - matchPattern: "*.example.com"

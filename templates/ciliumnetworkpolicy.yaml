@@ -9,28 +9,28 @@ RESERVED `ingress` identity -- not `host`, and not a pod in kube-system. The
 to it, and because it is a reserved identity Cilium resolves it before any
 CIDR match, so an ipBlock is not a reliable way to express it either.
 
-Measured in talos docs/policy-lab against a real Ingress through the live
-LoadBalancer, from outside the cluster:
+Measured against a real Ingress through Cilium's LoadBalancer, from outside
+the cluster:
 
   no policy                           -> HTTP 200
   netpol with namespaceSelector       -> HTTP 000, 8s timeout, BLOCKED
     kube-system
   that + this CNP                     -> HTTP 200 in 6ms
 
-Omitting this is what took every another-app integration down on 2026-08-16.
+Omitting this takes every public integration of the workload down at once.
 
 The same CNP also carries the `kube-apiserver` reserved entity, for
 admission-webhook traffic. The apiserver is hostNetwork and cannot be named
-by a vanilla NetworkPolicy either -- the longhorn-webhook precedent works
-around that by allowing the whole port with no `from:` at all, which admits
-any source on it. `kube-apiserver` names the real caller precisely. Verified
-live: the caller appears in Hubble as `reserved:kube-apiserver`.
+by a vanilla NetworkPolicy either -- the usual workaround allows the whole
+webhook port with no `from:` at all, which admits any source on it.
+`kube-apiserver` names the real caller precisely. Verified live: the caller
+appears in Hubble as `reserved:kube-apiserver`.
 
 Both entities render into ONE object, as separate entries in the same
 `ingress` list, rather than a second CiliumNetworkPolicy -- and the object
 keeps its existing `<name>-cilium-ingress` name even when it is carrying only
-the apiserver rule, so as not to orphan the CNPs already deployed in five
-live namespaces.
+the apiserver rule, so as not to orphan CNPs already deployed under that
+name.
 */}}
 {{- range $p := .Values.policies }}
 {{- if or $p.allowCiliumIngress $p.allowKubeApiserver $p.allowNodes $p.extraCiliumIngress (and $p.egress $p.egress.enabled) }}
@@ -75,14 +75,14 @@ spec:
     #
     # Expressed as reserved entities rather than an ipBlock of the node subnet
     # ON PURPOSE. Cilium resolves reserved identities BEFORE any CIDR match, so
-    # a 192.168.20.0/24 ipBlock does not reliably admit node traffic -- the same
+    # a node-subnet ipBlock does not reliably admit node traffic -- the same
     # reason allowCiliumIngress exists rather than an ipBlock for the LB.
     #
-    # Found 2026-08-19: Talos ships node logs to vector:5170 via a NodePort, and
-    # ~4 drops/sec had been discarded continuously since the logging namespace
-    # was default-denied. Nothing reported it -- no unhealthy pod, no down
-    # target, no alert. Pod-log ingestion via alloy kept working, so the log
-    # stack looked entirely healthy.
+    # Typical failure: a log collector that receives node logs through a
+    # NodePort keeps losing a few connections a second once its namespace is
+    # default-denied, and nothing reports it -- no unhealthy pod, no down
+    # target, no alert. Pod-log ingestion keeps working through another path,
+    # so the log stack looks entirely healthy.
     - fromEntities:
         - host
         - remote-node
@@ -125,22 +125,21 @@ spec:
     # ICMP type -- while the automatic egress rule above allows five of them.
     # That asymmetry was the bug, not a missing feature.
     #
-    # It cost the CoreDNS policy. Applied 2026-08-26 and withdrawn the same
-    # day: default-deny ingress ALSO denies inbound **Destination Unreachable**
-    # (IPv4 type 3, IPv6 type 1) from clients answering a LATE DNS reply -- they
-    # already had their answer from the other replica, so the response hit a
-    # closed socket. Harmless, and CoreDNS ignores them, but it pinned
-    # `AttributablePolicyDrops` firing continuously, and a permanently-firing
-    # alert is worse than an un-policed resolver. Note the shape of that
-    # failure: DNS never broke, no pod restarted, and every probe passed. The
-    # policy was CORRECT and still had to come out.
+    # Example: a default-deny ingress policy on CoreDNS ALSO denies inbound
+    # **Destination Unreachable** (IPv4 type 3, IPv6 type 1) from clients
+    # answering a LATE DNS reply -- they already had their answer from the
+    # other replica, so the response hit a closed socket. Harmless, and CoreDNS
+    # ignores them, but it keeps a policy-drop alert firing continuously, and a
+    # permanently-firing alert is worse than an un-policed resolver. Note the
+    # shape of that failure: DNS never breaks, no pod restarts, and every probe
+    # passes. The policy is CORRECT and still has to come out.
     #
     # THE GENERAL LESSON, which is why this hatch is raw rather than a typed
     # `allowIcmp` list: a capture filtered to the port you are policing is
     # structurally blind to everything else the same default-deny rule will
-    # drop. The CoreDNS derivation missed the kubelet probes on 8080/8181 the
-    # same way (caught by reading the Deployment) and then missed the ICMP
-    # (caught in production). What lands here next will be something else again.
+    # drop. A CoreDNS policy derived that way misses the kubelet probes on
+    # 8080/8181 for the same reason, and then the ICMP. What lands here next
+    # will be something else again.
     #
     # Content is NOT validated or reshaped -- it is spliced into the `ingress:`
     # list as written, so it must be valid CiliumNetworkPolicy ingress YAML.
@@ -157,11 +156,10 @@ spec:
   {{- if and $p.egress $p.egress.enabled }}
   egress:
     # ALWAYS FIRST, ALWAYS PRESENT. A CiliumNetworkPolicy carrying any egress
-    # content makes the selected endpoints DEFAULT-DENY for egress (policy-lab
-    # T4). Without DNS, name resolution fails first and the failure reads
-    # exactly like a policy drop against the real destination -- sending the
-    # reader to debug the wrong rule. This is a trap already paid for in the
-    # lab; it is emitted automatically so it cannot be forgotten.
+    # content makes the selected endpoints DEFAULT-DENY for egress. Without
+    # DNS, name resolution fails first and the failure reads exactly like a
+    # policy drop against the real destination -- sending the reader to debug
+    # the wrong rule. It is emitted automatically so it cannot be forgotten.
     - toEndpoints:
         - matchLabels:
             io.kubernetes.pod.namespace: kube-system
@@ -174,10 +172,10 @@ spec:
         # hubble_dns_queries_total, and `toFQDNs` below silently matches
         # NOTHING, failing as a drop against the real destination.
         #
-        # `protocol: ANY` rather than the UDP+TCP pair used below. This is the
-        # exact shape running in 20 namespaces since 2026-08-20, kept verbatim
-        # rather than reasoned about: an L7 rule attached to a two-entry port
-        # list is not a combination this cluster has ever proven, and a
+        # `protocol: ANY` rather than the UDP+TCP pair used below. This is a
+        # shape proven in production, kept verbatim rather than reasoned
+        # about: an L7 rule attached to a two-entry port list is an untested
+        # combination, and a
         # CiliumNetworkPolicy the agent rejects looks identical to one it
         # accepted until you query for flows that never arrive.
         - ports:
@@ -199,17 +197,17 @@ spec:
     #
     # VISIBLE: ICMPv6 Neighbour Solicitation (135) and Advertisement (136) to
     # other pods become ATTRIBUTABLE policy drops -- both identities present --
-    # which is precisely the shape `AttributablePolicyDrops` exists to catch.
-    # Rolling egress out to five namespaces on 2026-08-21 took that alert from a
-    # 12-16/h baseline to 319/h and put it into `pending`. An alert for real
-    # drops that fires permanently on harmless ones is worse than no alert.
+    # which is precisely the shape a policy-drop alert exists to catch. Without
+    # this rule, rolling egress out to a handful of namespaces can raise such an
+    # alert's rate twenty-fold. An alert for real drops that fires permanently
+    # on harmless ones is worse than no alert.
     #
     # INVISIBLE AND WORSE: it also drops **Packet Too Big** (ICMPv6 type 2) and
     # IPv4 **Destination Unreachable** (type 3, which carries Fragmentation
     # Needed). Those two ARE Path MTU Discovery. Dropping them is an MTU black
-    # hole: large transfers hang, nothing is logged, and no alert fires. This
-    # cluster has already lost days to exactly that on the dind runners -- curl
-    # exit 35 at exactly ~127s -- so it is a known, paid-for failure mode.
+    # hole: large transfers hang, nothing is logged, and no alert fires. A
+    # typical symptom is a TLS client failing at a fixed ~127s (curl exit 35),
+    # which is easy to lose days to.
     #
     # Scoped to `cluster` rather than `all`: pod-to-pod neighbour discovery and
     # in-cluster PMTUD are what default-deny broke. It is NOT scoped to the
@@ -233,8 +231,8 @@ spec:
             # IPv6 Destination Unreachable -- the direct counterpart of the
             # IPv4 type 3 above. ADDED 0.9.0: its absence was a FAMILY
             # ASYMMETRY, not a deliberate omission, and it was denying real
-            # pod-to-pod traffic (observed from wikijs on the cluster's IPv6
-            # pod CIDR). Same silent-failure class as PMTUD.
+            # pod-to-pod traffic on an IPv6 pod CIDR. Same silent-failure class
+            # as PMTUD.
             - type: 1
               family: IPv6
     # ALWAYS THIRD, ALWAYS PRESENT. ADDED 0.9.0.
@@ -249,10 +247,9 @@ spec:
     # NOT as `cluster`. Adding the two types to the `cluster` rule renders valid
     # YAML, reads as correct, and still denies every one of them.
     #
-    # Found in production: `AttributablePolicyDrops` came BACK after the Stage
-    # 1/2 egress rollout -- pgadmin, wikijs and plex, each from its own rollout
-    # time -- and was paging on Slack. 0.8.0 fixed Neighbour Discovery and
-    # PMTUD but left these, so the alert became permanent noise again.
+    # Found in production: policy-drop alerts came BACK on each namespace from
+    # the moment its egress policy rolled out. 0.8.0 fixed Neighbour Discovery
+    # and PMTUD but left these, so the alert became permanent noise again.
     #
     # Scoped to ff02::/16, never `world`: link-local multicast is not routable
     # off the link, so this grants nothing that can leave the node.
@@ -360,8 +357,8 @@ spec:
     {{- end }}
     {{- if $p.egress.allowKubeApiserver }}
     # The apiserver is hostNetwork and cannot be named by a vanilla
-    # NetworkPolicy. Anything driving `kubectl exec` -- the wal-switch CronJobs
-    # -- needs this.
+    # NetworkPolicy. Anything driving `kubectl exec` -- e.g. a CronJob that
+    # execs into a database pod -- needs this.
     - toEntities:
         - kube-apiserver
     {{- end }}
@@ -370,10 +367,11 @@ spec:
       Un-ported entries stay grouped in ONE rule so pre-toPorts policies render
       byte-identically. This is a TEMPLATE comment, not a YAML one, and it sits
       HERE rather than beside the bare branch on purpose: a rendered comment is
-      still a manifest diff. Putting it next to `- toFQDNs:` churned 8 unrelated
-      live releases in testing -- identical policy, but helmfile upgrades every
-      one of them. A template comment on its own line also leaves a blank line
-      behind, so it must sit between directives that already chomp whitespace.
+      still a manifest diff. Putting it next to `- toFQDNs:` churns every
+      unrelated release that renders this branch -- identical policy, but
+      helm/helmfile still upgrades every one of them. A template comment on its
+      own line also leaves a blank line behind, so it must sit between
+      directives that already chomp whitespace.
     */}}
     {{- $ported := list }}
     {{- $bare := list }}
@@ -396,9 +394,9 @@ spec:
     #
     # This matters more for FQDNs than it looks, because a name can resolve to
     # a host that runs far more than the one service being allowed. Concretely:
-    # `*.plex.direct` resolves to the LAN machine hosting Plex, which also runs
-    # a container stack, a CI runner and a DNS resolver -- so an un-ported rule
-    # for it is not "allow Plex", it is "allow that whole host".
+    # `*.plex.direct` resolves to whatever machine hosts Plex, which may also
+    # run a container stack, a CI runner or a DNS resolver -- so an un-ported
+    # rule for it is not "allow Plex", it is "allow that whole host".
     - toFQDNs:
         {{- toYaml (list (omit . "toPorts")) | nindent 8 }}
       toPorts:

@@ -1,6 +1,6 @@
 {{/*
-INGRESS ONLY. Phase 2 (egress) adds an `egress` key to these same entries and
-renders it into the sibling CiliumNetworkPolicy -- never into this file.
+INGRESS ONLY. An entry's `egress` key renders into the sibling
+CiliumNetworkPolicy -- never into this file.
 Vanilla egress can only express CIDRs, and outbound traffic here is mostly to
 named hosts on rotating IPs, which needs Cilium toFQDNs.
 

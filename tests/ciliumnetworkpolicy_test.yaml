@@ -27,8 +27,8 @@ tests:
 
   # The whole reason this template exists. Cilium ingress traffic arrives with
   # the RESERVED `ingress` identity; a vanilla NetworkPolicy cannot name it,
-  # and a kube-system namespaceSelector does NOT match it (proven in
-  # talos docs/policy-lab: HTTP 000 with that rule, 200 with this one).
+  # and a kube-system namespaceSelector does NOT match it (measured against a
+  # real Ingress through Cilium: HTTP 000 with that rule, 200 with this one).
   - it: allows the reserved ingress entity
     set:
       policies:
@@ -127,7 +127,7 @@ tests:
           count: 0
 
   # The apiserver is hostNetwork and cannot be named by a vanilla
-  # NetworkPolicy; the longhorn-webhook precedent allows the whole port
+  # NetworkPolicy; the usual workaround allows the whole webhook port
   # instead. `kube-apiserver` is the reserved Cilium identity that names it
   # precisely -- verified live: the caller appears in Hubble as
   # `reserved:kube-apiserver`.
@@ -152,8 +152,8 @@ tests:
           value: ["kube-apiserver"]
 
   # Both entities must land in ONE CiliumNetworkPolicy object, not two --
-  # renaming or duplicating the object would orphan the CNPs already
-  # deployed in five live namespaces.
+  # renaming or duplicating the object would orphan CNPs already deployed
+  # under the existing name.
   - it: renders one CNP with two ingress rules when both flags are set
     set:
       policies:
@@ -330,8 +330,8 @@ tests:
                   - 172.16.0.0/12
                   - 192.168.0.0/16
     asserts:
-      # The exclusions ARE the policy. This is the qbittorrent shape: allow the
-      # internet, deny the cluster and the LAN. Losing them inverts the meaning
+      # The exclusions ARE the policy: allow the internet, deny the cluster and
+      # the LAN. Losing them inverts the meaning
       # from "restrict" to "allow everything".
       - equal:
           path: spec.egress[3].toCIDRSet[0].cidr
@@ -494,8 +494,8 @@ tests:
           value: example
 
   # DNS VISIBILITY. The L7 rule is the prerequisite for toFQDNs and the only
-  # source of hubble_dns_queries_total. It was hand-applied to 19 namespaces on
-  # 2026-08-20 precisely because the chart could not express it.
+  # source of hubble_dns_queries_total. Without this key it can only be
+  # hand-applied, outside the chart.
   - it: upgrades the DNS rule to L7 when dnsVisibility is set
     set:
       policies:
@@ -508,7 +508,8 @@ tests:
       - equal:
           path: spec.egress[0].toPorts[0].rules.dns[0].matchPattern
           value: "*"
-      # protocol ANY, not the UDP+TCP pair -- this is the shape proven live.
+      # protocol ANY, not the UDP+TCP pair -- this is the shape proven in
+      # production.
       - equal:
           path: spec.egress[0].toPorts[0].ports[0].protocol
           value: ANY
@@ -555,7 +556,8 @@ tests:
       - notExists:
           path: spec.egress
 
-  # The object hand-applied to 19 namespaces, which this chart exists to replace.
+  # The DNS-visibility object otherwise hand-applied per namespace, which this
+  # chart exists to replace.
   # Observe without restricting: L7 DNS plus an allow-all.
   #
   # SHAPE CHANGED IN 0.8.0, deliberately: the list is now THREE rules, not two,
@@ -601,12 +603,12 @@ tests:
 
   # --- toEndpoints: in-cluster destinations -------------------------------
   #
-  # The gap that forced this feature. Piece C Stage 1 reached `homepage`, which
-  # egresses to SEVEN in-cluster services (six in plex, one in longhorn-system),
-  # and `pgadmin` needs authelia/netbox/wikijs. Neither could be expressed: the
-  # chart had toEntities, toCIDR, toFQDNs and extraEgress, but no way to name a
-  # pod. Every such namespace would have shipped raw Cilium YAML in a values
-  # file -- the exact thing this chart exists to prevent.
+  # The gap that forced this feature. A dashboard that egresses to several
+  # in-cluster services across namespaces, or a database admin tool that
+  # reaches databases in other namespaces, could not be expressed: the chart had
+  # toEntities, toCIDR, toFQDNs and extraEgress, but no way to name a pod.
+  # Every such namespace would have shipped raw Cilium YAML in a values file --
+  # the exact thing this chart exists to prevent.
   - it: renders toEndpoints with its ports
     set:
       policies:
@@ -730,7 +732,7 @@ tests:
 
   # The negative control for the assertion above: an entry WITHOUT
   # matchExpressions must not grow the key. If this ever fails, every existing
-  # policy in the cluster has silently changed shape.
+  # deployed policy has silently changed shape.
   - it: omits matchExpressions entirely when the entry does not set it
     set:
       policies:
@@ -934,17 +936,15 @@ tests:
   # Egress default-deny drops ALL pod-originated ICMP, which has two costs. The
   # visible one: ICMPv6 Neighbour Solicitation (135) to other pods becomes an
   # ATTRIBUTABLE policy drop -- both identities present -- which is exactly the
-  # shape `AttributablePolicyDrops` exists to catch. Rolling egress out to five
-  # namespaces on 2026-08-21 took that alert from a 12-16/h baseline to 319/h
-  # and put it into `pending`, i.e. the alert for real drops was about to become
-  # permanent noise.
+  # shape a policy-drop alert exists to catch. Without this rule, rolling
+  # egress out to a handful of namespaces can raise such an alert's rate
+  # twenty-fold, i.e. the alert for real drops becomes permanent noise.
   #
   # The invisible and worse one: it also drops **Packet Too Big** (ICMPv6 type
   # 2) and IPv4 **Destination Unreachable / Fragmentation Needed** (type 3),
   # which are how Path MTU Discovery works. Silently dropping those is an MTU
-  # black hole -- the failure mode that cost this cluster days on the dind
-  # runners (curl exit 35 at exactly ~127s) and which produces hangs on large
-  # transfers with NO alert at all.
+  # black hole -- typically a TLS client failing at a fixed ~127s (curl exit
+  # 35) -- which produces hangs on large transfers with NO alert at all.
   #
   # Emitted AUTOMATICALLY, like the DNS rule, so a consumer cannot forget it.
   - it: always emits the ICMP allowance when egress is enabled
@@ -989,14 +989,13 @@ tests:
             family: IPv4
 
   # *** ADDED 0.9.0 -- ALL THREE FOUND FIRING IN PRODUCTION. ***
-  # `AttributablePolicyDrops` came BACK after the Stage 1/2 egress rollout, on
-  # pgadmin (from 16:12Z), wikijs (18:12Z) and plex. Caught with
-  # `hubble observe --follow --verdict DROPPED --protocol icmpv6`, which named
-  # the exact types 0.8.0 does not emit.
+  # Policy-drop alerts came BACK on each namespace after its egress rollout.
+  # Caught with `hubble observe --follow --verdict DROPPED --protocol icmpv6`,
+  # which named the exact types 0.8.0 does not emit.
   #
   # IPv6 Destination Unreachable is type **1**. 0.8.0 allows IPv4 type 3, its
   # direct counterpart, but NOT this -- a family asymmetry, and the same class
-  # of silent failure as the PMTUD pair above. Seen pod-to-pod from wikijs.
+  # of silent failure as the PMTUD pair above. Seen pod-to-pod.
   - it: allows ICMPv6 Destination Unreachable, the counterpart of IPv4 type 3
     set:
       policies:
@@ -1114,10 +1113,9 @@ tests:
   # The ingress mirror of extraEgress. It exists because there was NO WAY to
   # allow an inbound ICMP type: extraIngress renders into the vanilla
   # NetworkPolicy, which has no ICMP, and every icmps: hook was egress-only.
-  # That asymmetry cost the CoreDNS policy, which was applied and withdrawn on
-  # 2026-08-26 -- correct, probes all passing, DNS never broken, and still
-  # unusable because it pinned AttributablePolicyDrops firing on inbound
-  # Destination Unreachable.
+  # That asymmetry makes a CoreDNS ingress policy unusable -- correct, probes
+  # all passing, DNS never broken, and still pinning a policy-drop alert
+  # firing on inbound Destination Unreachable.
   # --------------------------------------------------------------------------
   - it: appends extraCiliumIngress verbatim
     set:
@@ -1215,9 +1213,9 @@ tests:
       - notExists:
           path: spec.ingress[4]
 
-  # ZERO CHURN. Absent, it must change nothing -- 25 live releases were rendered
-  # against 0.11.0 and 0.12.0 and diffed byte-for-byte to prove this, but the
-  # assertion belongs here too so a later edit cannot quietly break it.
+  # ZERO CHURN. Absent, it must change nothing -- existing releases rendered
+  # against 0.11.0 and 0.12.0 must diff byte-for-byte identical, and the
+  # assertion belongs here so a later edit cannot quietly break it.
   - it: emits no ingress section when extraCiliumIngress is absent
     set:
       policies:
