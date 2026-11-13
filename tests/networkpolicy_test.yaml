@@ -77,8 +77,9 @@ tests:
           path: spec.ingress[0].ports[0].port
           value: 9000
 
-  # Phase 2 guard. An egress block here silently breaks DNS for whatever this
-  # selects, which is why phase 1 is ingress-only.
+  # Egress guard. An egress block in the vanilla NetworkPolicy silently breaks
+  # DNS for whatever this selects, which is why egress lives only in the
+  # CiliumNetworkPolicy.
   - it: never emits an egress block
     set:
       policies:

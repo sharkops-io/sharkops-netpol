@@ -8,8 +8,8 @@ home: https://github.com/sharkops-io/sharkops-netpol
 sources:
   - https://github.com/sharkops-io/sharkops-netpol
 maintainers:
-  - name: Andrew Landsverk
-    email: noreply@example.com
+  - name: sharkops-io
+    url: https://github.com/sharkops-io
 keywords:
   - networkpolicy
   - cilium
